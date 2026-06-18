@@ -107,7 +107,8 @@ export default function ChatBox({
   lastFailedMessage = '',
   retryLastFailedMessage,
   isSendingMessage = false,
-  isInteractionLocked = false
+  isInteractionLocked = false,
+  onRelationshipUpdateClick,
 }) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
@@ -134,6 +135,10 @@ export default function ChatBox({
     if (isComposerDisabled) return;
     sendMessage(promptText);
   };
+
+  const isRelationshipUpdateMessage = (msg) => (
+    msg.sender === 'system' && typeof msg.text === 'string' && msg.text.startsWith('📝 记忆更新：')
+  );
 
   return (
     <div className="glass-panel chat-container">
@@ -168,6 +173,20 @@ export default function ChatBox({
           if (msg.sender === 'user') {
             return <UserMessage key={msg.id} msg={msg} />;
           } else if (msg.sender === 'system') {
+            if (isRelationshipUpdateMessage(msg)) {
+              return (
+                <button
+                  key={msg.id}
+                  type="button"
+                  className="bubble bubble-system bubble-system-action"
+                  style={{ margin: '8px auto' }}
+                  onClick={onRelationshipUpdateClick}
+                >
+                  {msg.text}
+                </button>
+              );
+            }
+
             return (
               <div key={msg.id} className="bubble bubble-system" style={{ margin: '8px auto' }}>
                 {msg.text}

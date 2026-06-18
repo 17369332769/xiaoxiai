@@ -71,6 +71,8 @@ http://localhost:3000
 - `user.hasCheckedInToday`
 - `chatHistory`
 - `tasks`
+- `relationship.summary`
+- `relationship.highlights`
 
 ## POST /api/chat
 
@@ -91,6 +93,7 @@ http://localhost:3000
 - `user`
 - `tasks`
 - `systemMessages`
+- `relationship`
 
 说明：
 

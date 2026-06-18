@@ -75,4 +75,21 @@ describe('ChatBox', () => {
     fireEvent.click(screen.getByText('重试发送'));
     expect(retryLastFailedMessage).toHaveBeenCalled();
   });
+
+  test('clicking a relationship update system message triggers the focus callback', () => {
+    const onRelationshipUpdateClick = vi.fn();
+
+    render(
+      <ChatBox
+        chatHistory={[
+          { id: 'sys-memory-1', sender: 'system', text: '📝 记忆更新：小希刚记住了你的常喝饮品：拿铁', timestamp: '10:10' },
+        ]}
+        sendMessage={vi.fn()}
+        onRelationshipUpdateClick={onRelationshipUpdateClick}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /记忆更新/ }));
+    expect(onRelationshipUpdateClick).toHaveBeenCalledTimes(1);
+  });
 });

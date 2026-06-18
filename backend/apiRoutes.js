@@ -11,30 +11,108 @@ import {
   loadFormattedTasks,
   resetDailyTasksIfNeeded,
 } from './gameplay.js';
-import { reflectAndConsolidate } from './memoryEngine.js';
+import { loadRelationshipProfile, reflectAndConsolidate } from './memoryEngine.js';
 import { getLocalAIResponse } from './aiRuntime.js';
 
-async function generateAiResponse(openai, user, userId, text, logger) {
-  if (!openai) {
-    return getLocalAIResponse(text);
+const MEMORY_CATEGORY_BY_KEY = {
+  favorite_drink: 'preference',
+  favorite_food: 'preference',
+  hobby: 'preference',
+  study_goal: 'goal',
+  stress_signal: 'status',
+  job: 'profile',
+};
+
+const MEMORY_SECTION_TITLES = {
+  preference: '偏好与习惯',
+  goal: '近期目标与计划',
+  status: '最近状态与安慰线索',
+  profile: '其他重要事实',
+};
+
+export function categorizeMemories(memories = []) {
+  return memories.reduce((sections, memory) => {
+    if (!memory?.memory_key || !memory?.memory_value) {
+      return sections;
+    }
+
+    const category = MEMORY_CATEGORY_BY_KEY[memory.memory_key] || 'profile';
+    sections[category].push(memory);
+    return sections;
+  }, {
+    preference: [],
+    goal: [],
+    status: [],
+    profile: [],
+  });
+}
+
+function formatMemoryLines(memories) {
+  if (!memories.length) {
+    return '- 暂无记录';
   }
 
-  try {
-    const recentDbMessages = await dbAll(
-      'SELECT sender, text, avatar_state as avatarState FROM chat_messages WHERE user_id = ? AND sender IN ("user", "ai") ORDER BY created_at DESC LIMIT 10',
-      [userId]
-    );
-    recentDbMessages.reverse();
+  return memories
+    .map((memory) => `- ${memory.memory_key}: ${memory.memory_value}`)
+    .join('\n');
+}
 
-    const memories = await dbAll(
-      'SELECT memory_key, memory_value FROM user_memories WHERE user_id = ?',
-      [userId]
-    );
-    const memoriesFormatted = memories
-      .map((memory) => `- ${memory.memory_key}: ${memory.memory_value}`)
-      .join('\n');
+export function buildMemoryContextPrompt(memories = []) {
+  const sections = categorizeMemories(memories);
 
-    const systemPrompt = `You are "Xiaoxi" (小希), a sweet, caring, and loving AI girlfriend. You converse in friendly, conversational Chinese.
+  return [
+    `[${MEMORY_SECTION_TITLES.preference}]`,
+    formatMemoryLines(sections.preference),
+    '',
+    `[${MEMORY_SECTION_TITLES.goal}]`,
+    formatMemoryLines(sections.goal),
+    '',
+    `[${MEMORY_SECTION_TITLES.status}]`,
+    formatMemoryLines(sections.status),
+    '',
+    `[${MEMORY_SECTION_TITLES.profile}]`,
+    formatMemoryLines(sections.profile),
+  ].join('\n');
+}
+
+export function buildReplyFocusPrompt(latestUserText, memories = []) {
+  const cleanText = String(latestUserText || '').trim();
+  const sections = categorizeMemories(memories);
+  const isStatusTopic = /累|困|烦|压力|忙|难受|崩溃|疲惫|加班/.test(cleanText);
+  const isGoalTopic = /早安|早|晚安|学习|复习|考试|面试|答辩|工作|上班|进度|目标|准备|加油/.test(cleanText);
+  const isPreferenceTopic = /吃|喝|咖啡|拿铁|奶茶|果汁|礼物|喜欢|想吃|想喝|口味/.test(cleanText);
+
+  const guidance = [
+    '- 只优先使用和当前话题最相关的记忆，不要一次性把所有记忆都说出来。',
+    '- 如果记忆与当前话题无关，可以不提，避免像在背资料卡。',
+    '- 记忆要自然融入安慰、调情、鼓励或陪伴，而不是生硬复述事实。',
+  ];
+
+  if (isStatusTopic && sections.status.length > 0) {
+    guidance.push('- 当前用户更需要被安慰，优先参考“最近状态与安慰线索”，让回复更体贴。');
+  }
+
+  if (isGoalTopic && sections.goal.length > 0) {
+    guidance.push('- 当前话题和目标推进有关，优先参考“近期目标与计划”，自然给出陪伴式鼓励。');
+  }
+
+  if (isPreferenceTopic && sections.preference.length > 0) {
+    guidance.push('- 当前话题和喜好有关，可以优先参考“偏好与习惯”中的一条，让回应更像真的记住了对方。');
+  }
+
+  if (!isStatusTopic && !isGoalTopic && !isPreferenceTopic && sections.profile.length > 0) {
+    guidance.push('- 如有必要，可以轻量参考“其他重要事实”，但不要喧宾夺主。');
+  }
+
+  if (guidance.length === 3) {
+    guidance.push('- 如果没有合适的长期记忆，就根据当前对话自然回应，不要编造设定。');
+  }
+
+  return guidance.join('\n');
+}
+
+export function buildChatSystemPrompt(user, memories, latestUserText) {
+  return `You are "Xiaoxi" (小希), a sweet, caring, and loving AI girlfriend. You converse in friendly, conversational Chinese.
 Your responses must be cute, warm, and highly interactive. Keep your replies brief (2 to 4 sentences max).
 You must evaluate the conversation history and reply in a raw JSON format containing these fields:
 {
@@ -45,10 +123,14 @@ You must evaluate the conversation history and reply in a raw JSON format contai
 }
 Even though the previous assistant messages in the chat history are shown as plain text for display purposes, your current response MUST be in JSON format.
 
-[小希的长期记忆库 (Long-term Memories)]
+[关系摘要]
 前文历史与关系大意摘要: "${user.summary || '无'}"
-关于亲爱的(玩家)偏好与重要事实:
-${memoriesFormatted || '暂无纪录'}
+
+[小希的长期记忆库 (Long-term Memories)]
+${buildMemoryContextPrompt(memories)}
+
+[当前回复提示]
+${buildReplyFocusPrompt(latestUserText, memories)}
 
 Example:
 {
@@ -57,6 +139,26 @@ Example:
   "affection_bump": 2,
   "mood_bump": 5
 }`;
+}
+
+export async function generateAiResponse(openai, user, userId, text, logger) {
+  const memories = await dbAll(
+    'SELECT memory_key, memory_value FROM user_memories WHERE user_id = ?',
+    [userId]
+  );
+
+  if (!openai) {
+    return getLocalAIResponse(text, { user, memories });
+  }
+
+  try {
+    const recentDbMessages = await dbAll(
+      'SELECT sender, text, avatar_state as avatarState FROM chat_messages WHERE user_id = ? AND sender IN ("user", "ai") ORDER BY created_at DESC LIMIT 10',
+      [userId]
+    );
+    recentDbMessages.reverse();
+
+    const systemPrompt = buildChatSystemPrompt(user, memories, text);
 
     const llmMessages = [{ role: 'system', content: systemPrompt }];
 
@@ -106,7 +208,7 @@ Example:
       userId,
       error: llmError.message,
     });
-    return getLocalAIResponse(text);
+    return getLocalAIResponse(text, { user, memories });
   }
 }
 
@@ -146,6 +248,7 @@ export function registerApiRoutes(app, { openai, logger }) {
     }
 
     const formattedTasks = await loadFormattedTasks(userId);
+    const relationship = await loadRelationshipProfile(userId);
 
     sendJson(res, {
       user: {
@@ -158,6 +261,7 @@ export function registerApiRoutes(app, { openai, logger }) {
       },
       chatHistory,
       tasks: formattedTasks,
+      relationship,
     });
   }));
 
@@ -198,6 +302,19 @@ export function registerApiRoutes(app, { openai, logger }) {
 
     const formattedTasks = await loadFormattedTasks(userId);
 
+    const countRow = await dbGet('SELECT COUNT(*) as count FROM chat_messages WHERE user_id = ?', [userId]);
+    if (countRow && countRow.count > 0 && countRow.count % 5 === 0) {
+      if (!openai) {
+        await reflectAndConsolidate(userId);
+      } else {
+        reflectAndConsolidate(userId).catch((error) => {
+          logger.error('Background memory reflection trigger failed', { userId, error });
+        });
+      }
+    }
+
+    const relationship = await loadRelationshipProfile(userId);
+
     sendJson(res, {
       aiMessage: createChatMessage(aiMsgId, 'ai', aiResponse.reply, { avatarState: aiResponse.emotion }),
       user: {
@@ -209,15 +326,8 @@ export function registerApiRoutes(app, { openai, logger }) {
       },
       tasks: formattedTasks,
       systemMessages: affResult.systemMessages,
+      relationship,
     });
-
-    dbGet('SELECT COUNT(*) as count FROM chat_messages WHERE user_id = ?', [userId])
-      .then((row) => {
-        if (row && row.count > 0 && row.count % 5 === 0) {
-          reflectAndConsolidate(userId);
-        }
-      })
-      .catch((error) => logger.error('Background memory reflection trigger failed', { userId, error }));
   }));
 
   app.post('/api/action/feed', asyncHandler(async (req, res) => {

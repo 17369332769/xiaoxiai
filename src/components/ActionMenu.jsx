@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import * as React from 'react';
+
+const { useState } = React;
 
 export default function ActionMenu({
   tasks,
@@ -6,7 +8,10 @@ export default function ActionMenu({
   openShop,
   openTipping,
   isInteractionLocked = false,
-  claimingTaskIds = []
+  claimingTaskIds = [],
+  lastFailedAction,
+  retryLastFailedAction,
+  isRetryingFailedAction = false,
 }) {
   const [showTasks, setShowTasks] = useState(false);
 
@@ -33,6 +38,23 @@ export default function ActionMenu({
             </span>
           )}
         </div>
+
+        {lastFailedAction?.kind === 'task-claim' && (
+          <div className="action-retry-banner">
+            <div className="action-retry-copy">
+              <div className="action-retry-label">上一次领奖失败</div>
+              <div className="action-retry-preview">{lastFailedAction.label}</div>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary action-retry-action"
+              onClick={retryLastFailedAction}
+              disabled={isInteractionLocked || isRetryingFailedAction}
+            >
+              {(isInteractionLocked || isRetryingFailedAction) ? '重试中...' : '重试领奖'}
+            </button>
+          </div>
+        )}
         
         <div className="action-buttons">
           {/* Feed Shop Button */}

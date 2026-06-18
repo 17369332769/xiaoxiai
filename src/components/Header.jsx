@@ -4,7 +4,16 @@ import { createClientLogger } from '../utils/clientLogger';
 const { useState, useRef } = React;
 const logger = createClientLogger('header');
 
-export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInCompleted, isCheckInPending, notify }) {
+export default function Header({
+  onlineCount,
+  coins,
+  dailyCheckIn,
+  isCheckInCompleted,
+  isCheckInPending,
+  lastFailedAction,
+  retryLastFailedAction,
+  notify,
+}) {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef(null);
   const hasShownAudioHintRef = useRef(false);
@@ -57,27 +66,40 @@ export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInComp
         </div>
 
         {/* Daily Check-in Button */}
-        <button
-          onClick={dailyCheckIn}
-          disabled={isCheckInCompleted || isCheckInPending}
-          className={`btn-secondary checkin-btn ${isCheckInCompleted ? 'completed' : ''}`}
-          style={{
-            padding: '6px 14px',
-            borderRadius: '20px',
-            fontSize: '13px',
-            fontWeight: '600',
-            background: isCheckInCompleted ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 117, 151, 0.15)',
-            color: isCheckInCompleted ? '#4ade80' : '#ff7597',
-            borderColor: isCheckInCompleted ? '#22c55e' : '#ff7597',
-            cursor: (isCheckInCompleted || isCheckInPending) ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px'
-          }}
-        >
-          <span>📅</span>
-          <span>{isCheckInCompleted ? '已签到' : (isCheckInPending ? '签到中...' : '每日签到')}</span>
-        </button>
+        <div className="header-checkin-group">
+          <button
+            onClick={dailyCheckIn}
+            disabled={isCheckInCompleted || isCheckInPending}
+            className={`btn-secondary checkin-btn ${isCheckInCompleted ? 'completed' : ''}`}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              fontSize: '13px',
+              fontWeight: '600',
+              background: isCheckInCompleted ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 117, 151, 0.15)',
+              color: isCheckInCompleted ? '#4ade80' : '#ff7597',
+              borderColor: isCheckInCompleted ? '#22c55e' : '#ff7597',
+              cursor: (isCheckInCompleted || isCheckInPending) ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <span>📅</span>
+            <span>{isCheckInCompleted ? '已签到' : (isCheckInPending ? '签到中...' : '每日签到')}</span>
+          </button>
+
+          {lastFailedAction?.kind === 'checkin' && (
+            <button
+              type="button"
+              className="btn-secondary checkin-retry-inline"
+              onClick={retryLastFailedAction}
+              disabled={isCheckInPending}
+            >
+              {isCheckInPending ? '重试中...' : '重试签到'}
+            </button>
+          )}
+        </div>
 
         {/* Sound toggle button */}
         <button

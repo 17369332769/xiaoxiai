@@ -31,6 +31,13 @@ describe('useGameStore', () => {
           tasks: [
             { id: 'checkin', name: '每日签到', reward: 50, progress: 1, target: 1, completed: true, claimed: false },
           ],
+          relationship: {
+            summary: '小希已经记住你喜欢甜甜的陪伴。',
+            highlights: [{ key: 'favorite_drink', label: '常喝饮品', value: '拿铁' }],
+            recentUpdates: [
+              { id: 'memory-1', category: 'preference', categoryLabel: '偏好', sourceType: 'local_memory', sourceLabel: '规则提取', confidence: 'high', confidenceLabel: '高可信', text: '小希刚记住了你的常喝饮品：拿铁', timestamp: '10:01' },
+            ],
+          },
         });
       }
 
@@ -50,6 +57,9 @@ describe('useGameStore', () => {
     expect(result.current.hasCheckedInToday).toBe(true);
     expect(result.current.chatHistory).toHaveLength(1);
     expect(result.current.tasks[0].id).toBe('checkin');
+    expect(result.current.relationshipSummary).toContain('记住你喜欢甜甜的陪伴');
+    expect(result.current.relationshipHighlights[0].value).toBe('拿铁');
+    expect(result.current.relationshipRecentUpdates[0].text).toContain('常喝饮品');
   });
 
   test('exposes shared game configuration as the storefront source of truth', async () => {
@@ -67,6 +77,10 @@ describe('useGameStore', () => {
           },
           chatHistory: [],
           tasks: [],
+          relationship: {
+            summary: '',
+            highlights: [],
+          },
         });
       }
 
@@ -125,6 +139,13 @@ describe('useGameStore', () => {
           systemMessages: [
             { id: 'sys-level', sender: 'system', text: '升级啦', timestamp: '10:01' },
           ],
+          relationship: {
+            summary: '小希记住你今天想被温柔陪伴。',
+            highlights: [{ key: 'stress_signal', label: '最近状态', value: '最近有点累，想被温柔安慰' }],
+            recentUpdates: [
+              { id: 'memory-chat-1', category: 'status', categoryLabel: '近况', sourceType: 'local_memory', sourceLabel: '规则提取', confidence: 'high', confidenceLabel: '高可信', text: '小希刚记住了你的最近状态：最近有点累，想被温柔安慰', timestamp: '10:01' },
+            ],
+          },
         });
       }
 
@@ -152,6 +173,9 @@ describe('useGameStore', () => {
     expect(result.current.avatarState).toBe('happy');
     expect(result.current.tasks[0].id).toBe('chat_3');
     expect(result.current.chatHistory.some(msg => msg.text === '升级啦')).toBe(true);
+    expect(result.current.relationshipSummary).toContain('今天想被温柔陪伴');
+    expect(result.current.relationshipHighlights[0].key).toBe('stress_signal');
+    expect(result.current.relationshipRecentUpdates[0].category).toBe('status');
   });
 
   test('dailyCheckIn updates sign-in state after successful response', async () => {
@@ -210,6 +234,83 @@ describe('useGameStore', () => {
     expect(result.current.avatarState).toBe('happy');
     expect(result.current.tasks[0].completed).toBe(true);
     expect(result.current.chatHistory.some(msg => msg.id === 'checkin-ai')).toBe(true);
+  });
+
+  test('stores the last failed check-in action and retries it successfully', async () => {
+    let checkinCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 200,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [
+            { id: 'checkin', name: '每日签到', reward: 50, progress: 0, target: 1, completed: false, claimed: false },
+          ],
+        });
+      }
+
+      if (input === '/api/checkin') {
+        checkinCalls += 1;
+
+        if (checkinCalls === 1) {
+          return Promise.reject(new Error('check-in failed once'));
+        }
+
+        return mockJsonResponse({
+          ok: true,
+          aiMsg: {
+            id: 'checkin-ai-retry',
+            sender: 'ai',
+            text: '补签成功',
+            avatarState: 'happy',
+            timestamp: '10:06',
+          },
+          tasks: [
+            { id: 'checkin', name: '每日签到', reward: 50, progress: 1, target: 1, completed: true, claimed: false },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    await act(async () => {
+      const success = await result.current.dailyCheckIn();
+      expect(success).toBe(false);
+    });
+
+    expect(result.current.lastFailedAction).toEqual({
+      kind: 'checkin',
+      label: '每日签到',
+    });
+
+    await act(async () => {
+      const success = await result.current.retryLastFailedAction();
+      expect(success).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasCheckedInToday).toBe(true);
+    });
+
+    expect(checkinCalls).toBe(2);
+    expect(result.current.lastFailedAction).toBe(null);
+    expect(result.current.chatHistory.some((msg) => msg.id === 'checkin-ai-retry')).toBe(true);
   });
 
   test('giftXiaoxi publishes an in-app warning instead of using alert when coins are insufficient', async () => {
@@ -593,5 +694,257 @@ describe('useGameStore', () => {
 
     expect(feedCalls).toBe(2);
     expect(result.current.lastFailedAction).toBe(null);
+  });
+
+  test('stores the last failed task-claim action and retries it successfully', async () => {
+    let claimCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 200,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [
+            { id: 'chat_3', name: '聊天 3 次', reward: 30, progress: 3, target: 3, completed: true, claimed: false },
+          ],
+        });
+      }
+
+      if (input === '/api/task/claim') {
+        claimCalls += 1;
+
+        if (claimCalls === 1) {
+          return Promise.reject(new Error('claim failed once'));
+        }
+
+        return mockJsonResponse({
+          ok: true,
+          sysMsg: {
+            id: 'claim-sys-1',
+            sender: 'system',
+            text: '领取成功',
+            timestamp: '10:07',
+          },
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 230,
+          },
+          tasks: [
+            { id: 'chat_3', name: '聊天 3 次', reward: 30, progress: 3, target: 3, completed: true, claimed: true },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    await act(async () => {
+      const success = await result.current.claimTaskReward('chat_3');
+      expect(success).toBe(false);
+    });
+
+    expect(result.current.lastFailedAction).toEqual({
+      kind: 'task-claim',
+      taskId: 'chat_3',
+      label: '聊天 3 次',
+    });
+
+    await act(async () => {
+      const success = await result.current.retryLastFailedAction();
+      expect(success).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(result.current.tasks[0].claimed).toBe(true);
+    });
+
+    expect(claimCalls).toBe(2);
+    expect(result.current.coins).toBe(230);
+    expect(result.current.lastFailedAction).toBe(null);
+    expect(result.current.chatHistory.some((msg) => msg.id === 'claim-sys-1')).toBe(true);
+  });
+
+  test('announces relationship memory updates after chat returns new memory details', async () => {
+    let chatCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 200,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [],
+          relationship: {
+            summary: '',
+            highlights: [],
+            recentUpdates: [],
+          },
+        });
+      }
+
+      if (input === '/api/chat') {
+        chatCalls += 1;
+
+        return mockJsonResponse({
+          ok: true,
+          aiMessage: {
+            id: `ai-memory-${chatCalls}`,
+            sender: 'ai',
+            text: '我会好好记住你的~',
+            avatarState: 'happy',
+            timestamp: '10:08',
+          },
+          user: {
+            level: 1,
+            affection: 12,
+            energy: 78,
+            mood: 74,
+            coins: 200,
+          },
+          tasks: [],
+          systemMessages: [],
+          relationship: {
+            summary: '小希记住你常喝拿铁，也发现你最近有点累。',
+            highlights: [
+              { key: 'favorite_drink', label: '常喝饮品', value: '拿铁' },
+            ],
+            recentUpdates: [
+              { id: 'persisted-memory-1', category: 'preference', categoryLabel: '偏好', sourceType: 'local_memory', sourceLabel: '规则提取', confidence: 'high', confidenceLabel: '高可信', text: '小希刚记住了你的常喝饮品：拿铁', timestamp: '10:08' },
+            ],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    await act(async () => {
+      const success = await result.current.sendMessage('请你记住我喜欢喝拿铁');
+      expect(success).toBe(true);
+    });
+
+    expect(result.current.hasFreshRelationshipUpdate).toBe(true);
+    expect(result.current.notifications.some((item) => item.title === '记忆更新')).toBe(true);
+    expect(result.current.chatHistory.some((item) => item.sender === 'system' && item.text.includes('记忆更新'))).toBe(true);
+    expect(result.current.relationshipRecentUpdates[0].text).toContain('常喝饮品');
+    expect(result.current.relationshipRecentUpdates[0].category).toBe('preference');
+    expect(result.current.relationshipRecentUpdates[0].categoryLabel).toBe('偏好');
+
+    await waitFor(() => {
+      expect(result.current.hasFreshRelationshipUpdate).toBe(false);
+    }, { timeout: 5000 });
+  }, 7000);
+
+  test('does not append duplicate memory update timeline entries when relationship data is unchanged', async () => {
+    let chatCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 200,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [],
+          relationship: {
+            summary: '',
+            highlights: [],
+            recentUpdates: [],
+          },
+        });
+      }
+
+      if (input === '/api/chat') {
+        chatCalls += 1;
+
+        return mockJsonResponse({
+          ok: true,
+          aiMessage: {
+            id: `ai-memory-repeat-${chatCalls}`,
+            sender: 'ai',
+            text: '我会一直记得你的。',
+            avatarState: 'happy',
+            timestamp: '10:09',
+          },
+          user: {
+            level: 1,
+            affection: 12 + chatCalls,
+            energy: 78,
+            mood: 74,
+            coins: 200,
+          },
+          tasks: [],
+          systemMessages: [],
+          relationship: {
+            summary: '小希记住你常喝拿铁。',
+            highlights: [
+              { key: 'favorite_drink', label: '常喝饮品', value: '拿铁' },
+            ],
+            recentUpdates: [
+              { id: 'persisted-memory-repeat', category: 'preference', categoryLabel: '偏好', sourceType: 'local_memory', sourceLabel: '规则提取', confidence: 'high', confidenceLabel: '高可信', text: '小希刚记住了你的常喝饮品：拿铁', timestamp: '10:09' },
+            ],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.sendMessage('请记住我喜欢拿铁');
+    });
+
+    await act(async () => {
+      await result.current.sendMessage('再记一遍我喜欢拿铁');
+    });
+
+    const memoryUpdateMessages = result.current.chatHistory.filter(
+      (item) => item.sender === 'system' && item.text.includes('记忆更新')
+    );
+
+    expect(memoryUpdateMessages).toHaveLength(1);
+    expect(result.current.relationshipRecentUpdates).toHaveLength(1);
   });
 });

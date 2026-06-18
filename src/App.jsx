@@ -16,6 +16,7 @@ function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('shop'); // 'shop' or 'tipping'
   const [shopType, setShopType] = useState('food'); // 'food' or 'gift'
+  const [relationshipCardFocusToken, setRelationshipCardFocusToken] = useState(0);
 
   // Open shop with active tab
   const openShop = (type) => {
@@ -28,6 +29,10 @@ function App() {
   const openTipping = () => {
     setModalMode('tipping');
     setIsModalOpen(true);
+  };
+
+  const focusRelationshipCard = () => {
+    setRelationshipCardFocusToken((token) => token + 1);
   };
 
   // Check if daily check-in task is completed
@@ -50,6 +55,8 @@ function App() {
         dailyCheckIn={store.dailyCheckIn}
         isCheckInCompleted={isCheckInCompleted}
         isCheckInPending={store.isCheckingIn || store.isSyncing}
+        lastFailedAction={store.lastFailedAction}
+        retryLastFailedAction={store.retryLastFailedAction}
         notify={store.notify}
       />
 
@@ -80,6 +87,11 @@ function App() {
           energy={store.energy}
           mood={store.mood}
           avatarState={store.avatarState}
+          relationshipSummary={store.relationshipSummary}
+          relationshipHighlights={store.relationshipHighlights}
+          relationshipRecentUpdates={store.relationshipRecentUpdates}
+          hasFreshRelationshipUpdate={store.hasFreshRelationshipUpdate}
+          relationshipCardFocusToken={relationshipCardFocusToken}
         />
 
         {/* Right Side: Conversation and Action Controls */}
@@ -92,6 +104,7 @@ function App() {
             retryLastFailedMessage={store.retryLastFailedMessage}
             isSendingMessage={store.isSendingMessage}
             isInteractionLocked={store.isSyncing}
+            onRelationshipUpdateClick={focusRelationshipCard}
           />
 
           {/* Action Menu (Shop items & Tasks) */}
@@ -102,6 +115,9 @@ function App() {
             openTipping={openTipping}
             isInteractionLocked={store.isSyncing}
             claimingTaskIds={store.claimingTaskIds}
+            lastFailedAction={store.lastFailedAction}
+            retryLastFailedAction={store.retryLastFailedAction}
+            isRetryingFailedAction={store.isCheckingIn || store.claimingTaskIds.length > 0}
           />
         </div>
       </main>

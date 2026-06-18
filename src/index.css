@@ -387,6 +387,20 @@ button {
   gap: 20px;
 }
 
+.header-checkin-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkin-retry-inline {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-pink);
+  border-color: rgba(255, 117, 151, 0.26);
+}
+
 .online-users {
   background: rgba(56, 189, 248, 0.1);
   border: 1px solid rgba(56, 189, 248, 0.2);
@@ -515,6 +529,283 @@ button {
   gap: 12px;
   margin-bottom: 20px;
   z-index: 5;
+}
+
+.relationship-memory-card {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 117, 151, 0.1) 0%, rgba(192, 132, 252, 0.1) 100%);
+  border: 1px solid rgba(255, 117, 151, 0.16);
+  position: relative;
+  overflow: hidden;
+}
+
+.relationship-memory-card.is-updated {
+  border-color: rgba(255, 210, 105, 0.42);
+  box-shadow: 0 0 0 1px rgba(255, 210, 105, 0.15), 0 0 22px rgba(255, 210, 105, 0.18);
+  animation: memory-card-glow 1.2s ease-in-out 2;
+}
+
+.relationship-memory-card.is-focused {
+  border-color: rgba(56, 189, 248, 0.42);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.18), 0 0 28px rgba(56, 189, 248, 0.18);
+}
+
+.relationship-memory-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-pink);
+  margin-bottom: 6px;
+}
+
+.relationship-memory-update-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 210, 105, 0.12);
+  border: 1px solid rgba(255, 210, 105, 0.24);
+  color: var(--accent-gold);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.relationship-memory-summary {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.relationship-memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.relationship-memory-history {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.relationship-memory-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.relationship-memory-history-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-pink);
+}
+
+.relationship-memory-history-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.relationship-memory-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.relationship-memory-source-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.relationship-memory-active-filters {
+  margin: -2px 0 10px;
+  font-size: 11px;
+  color: #fbcfe8;
+}
+
+.relationship-memory-filter-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.relationship-memory-filter-chip.is-secondary {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.relationship-memory-filter-chip:hover {
+  border-color: rgba(255, 117, 151, 0.26);
+  color: var(--text-pink);
+  background: rgba(255, 117, 151, 0.08);
+}
+
+.relationship-memory-filter-chip.is-active {
+  background: rgba(255, 117, 151, 0.14);
+  border-color: rgba(255, 117, 151, 0.34);
+  color: #ffd4de;
+}
+
+.relationship-memory-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.relationship-memory-history-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.relationship-memory-history-item.is-low-confidence .relationship-memory-history-text {
+  opacity: 0.78;
+}
+
+.relationship-memory-history-time {
+  color: var(--accent-cyan);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.relationship-memory-history-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.relationship-memory-history-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.relationship-memory-history-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.relationship-memory-history-badge.category-preference {
+  background: rgba(255, 210, 105, 0.14);
+  color: var(--accent-gold);
+}
+
+.relationship-memory-history-badge.category-goal {
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--accent-cyan);
+}
+
+.relationship-memory-history-badge.category-status {
+  background: rgba(192, 132, 252, 0.16);
+  color: #d8b4fe;
+}
+
+.relationship-memory-history-badge.category-bond {
+  background: rgba(255, 117, 151, 0.14);
+  color: var(--text-pink);
+}
+
+.relationship-memory-history-text {
+  color: var(--text-muted);
+}
+
+.relationship-memory-confidence-note {
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.relationship-memory-source-badge,
+.relationship-memory-confidence-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.relationship-memory-source-badge {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d6d3f5;
+}
+
+.relationship-memory-confidence-badge.confidence-high {
+  background: rgba(34, 197, 94, 0.14);
+  color: #86efac;
+}
+
+.relationship-memory-confidence-badge.confidence-medium {
+  background: rgba(56, 189, 248, 0.14);
+  color: #93c5fd;
+}
+
+.relationship-memory-confidence-badge.confidence-low {
+  background: rgba(255, 210, 105, 0.14);
+  color: #fcd34d;
+}
+
+.relationship-memory-history-empty {
+  padding: 12px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.relationship-memory-toggle {
+  margin-top: 10px;
+  background: transparent;
+  color: var(--accent-cyan);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0;
+}
+
+.relationship-memory-toggle:hover {
+  color: #7dd3fc;
+}
+
+.relationship-memory-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  color: var(--text-main);
+}
+
+.relationship-memory-tag strong {
+  color: var(--text-pink);
+  font-weight: 700;
+}
+
+@keyframes memory-card-glow {
+  0%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 1px rgba(255, 210, 105, 0.15), 0 0 12px rgba(255, 210, 105, 0.12);
+  }
+  50% {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgba(255, 210, 105, 0.2), 0 0 24px rgba(255, 210, 105, 0.24);
+  }
 }
 
 .status-bar-group {
@@ -822,6 +1113,17 @@ button {
   padding: 8px 12px;
 }
 
+.bubble-system-action {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.bubble-system-action:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 210, 105, 0.42);
+  box-shadow: 0 0 12px rgba(255, 210, 105, 0.16);
+}
+
 .chat-suggested {
   display: flex;
   gap: 8px;
@@ -919,6 +1221,43 @@ button {
 
 .action-icon {
   font-size: 22px;
+}
+
+.action-retry-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 12px 0 14px;
+  border-radius: 14px;
+  background: rgba(255, 117, 151, 0.08);
+  border: 1px solid rgba(255, 117, 151, 0.18);
+}
+
+.action-retry-copy {
+  min-width: 0;
+}
+
+.action-retry-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-pink);
+  margin-bottom: 2px;
+}
+
+.action-retry-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-retry-action {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 /* Tipping Shop and Gift Popup */

@@ -47,4 +47,24 @@ describe('Header', () => {
     expect(screen.getByText('签到中...')).not.toBeNull();
     expect(screen.getByRole('button', { name: /签到中/ }).disabled).toBe(true);
   });
+
+  test('shows a retry button for failed check-in actions', () => {
+    const retryLastFailedAction = vi.fn();
+
+    render(
+      <Header
+        onlineCount={1314}
+        coins={200}
+        dailyCheckIn={vi.fn()}
+        isCheckInCompleted={false}
+        isCheckInPending={false}
+        lastFailedAction={{ kind: 'checkin', label: '每日签到' }}
+        retryLastFailedAction={retryLastFailedAction}
+        notify={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '重试签到' }));
+    expect(retryLastFailedAction).toHaveBeenCalledTimes(1);
+  });
 });

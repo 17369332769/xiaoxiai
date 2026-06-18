@@ -111,6 +111,23 @@ async function initializeTables() {
       )
     `);
 
+    // 5. Relationship Memory Timeline Table
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS relationship_memory_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        category TEXT,
+        category_label TEXT,
+        source_type TEXT,
+        source_label TEXT,
+        confidence TEXT,
+        confidence_label TEXT,
+        text TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `);
+
     // Migration: Add summary column to users if it doesn't exist
     try {
       await dbRun('ALTER TABLE users ADD COLUMN summary TEXT DEFAULT ""');
@@ -128,6 +145,24 @@ async function initializeTables() {
     } catch (alterError) {
       if (!alterError.message.includes('duplicate column name') && !alterError.message.includes('already exists')) {
         logger.warn('Migration warning for users.last_task_reset column', { error: alterError.message });
+      }
+    }
+
+    const relationshipEventColumns = [
+      { name: 'source_type', definition: 'TEXT DEFAULT "local_memory"' },
+      { name: 'source_label', definition: 'TEXT DEFAULT "规则提取"' },
+      { name: 'confidence', definition: 'TEXT DEFAULT "medium"' },
+      { name: 'confidence_label', definition: 'TEXT DEFAULT "中可信"' },
+    ];
+
+    for (const column of relationshipEventColumns) {
+      try {
+        await dbRun(`ALTER TABLE relationship_memory_events ADD COLUMN ${column.name} ${column.definition}`);
+        logger.info(`Migration applied: relationship_memory_events.${column.name} column added`);
+      } catch (alterError) {
+        if (!alterError.message.includes('duplicate column name') && !alterError.message.includes('already exists')) {
+          logger.warn(`Migration warning for relationship_memory_events.${column.name} column`, { error: alterError.message });
+        }
       }
     }
 

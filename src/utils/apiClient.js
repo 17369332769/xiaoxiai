@@ -16,3 +16,14 @@ export async function parseApiResponse(response) {
 
   return data;
 }
+
+export async function postJson(url, payload, { signal } = {}) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify(payload),
+  });
+
+  return parseApiResponse(response);
+}
