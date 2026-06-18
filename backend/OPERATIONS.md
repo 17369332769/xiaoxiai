@@ -21,7 +21,7 @@ Copy-Item backend/.env.example backend/.env
 - `EXTRA_BLOCKED_WORDS`：聊天内容安全过滤的额外屏蔽词（逗号分隔），追加到内置词表
 - `MEMORY_CAP`：每个用户长期记忆条数上限，默认 `20`；超出后按权重（被反复提及的事实权重更高）和时间淘汰，非法/缺省值回落到 `20`
 - `MEMORY_TTL_DAYS`：长期记忆失效天数，默认 `0`（关闭）；>0 时在记忆整理阶段清理 `updated_at` 超过 N 天且权重 ≤ 1（未被反复提及）的陈旧记忆，高权重重要记忆不因时间删除，非法/缺省值回落到 `0`
-- `XIAOXIAI_DB_PATH`：SQLite 文件路径，默认是 [database.sqlite](database.sqlite)
+- `XIAOXIAI_DB_PATH`：SQLite 文件路径，默认是 `backend/database.sqlite`（本地运行时生成，不建议提交到仓库）
 - `PRESENCE_BASELINE`：在真实在线人数上叠加的展示基数，默认 `0`
 - `PAYMENT_SECRET`：支付回调签名密钥（HMAC-SHA256），生产环境必须设置为强随机值
 - `AUTH_SECRET`：账号登录令牌签名密钥（HMAC-SHA256），生产环境必须设置为强随机值
@@ -220,12 +220,13 @@ npm --prefix backend run dev
 
 ## SQLite Notes
 
-默认数据库路径是 [database.sqlite](database.sqlite)。
+默认数据库路径是 `backend/database.sqlite`。
 
 建议：
 
 - 本地开发使用默认路径即可
 - 自动化测试使用独立临时库
+- `database.sqlite` 属于运行时数据文件，默认不应提交到仓库
 - 不要把测试库或运行期生成的 `*.sqlite-wal`、`*.sqlite-shm` 提交到仓库
 
 如果需要切换数据库位置：

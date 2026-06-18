@@ -26,7 +26,7 @@ xiaoxiai/
 │  ├─ server.js          # API 入口
 │  ├─ db.js              # SQLite 初始化与封装
 │  ├─ memoryEngine.js    # 记忆整理任务
-│  └─ database.sqlite    # 本地数据库
+│  └─ database.sqlite    # 本地运行时生成的数据库文件（默认不提交）
 ├─ vite.config.js        # 前端开发代理配置
 └─ 需求分析文档.md        # 当前产品需求与迭代建议
 ```
@@ -173,7 +173,9 @@ npm start
 
 SQLite 文件位置：
 
-- [database.sqlite](backend/database.sqlite)
+- 默认运行时路径为 `backend/database.sqlite`
+- 也可以通过 `XIAOXIAI_DB_PATH` 指向自定义位置
+- 该文件属于本地/部署环境数据文件，默认不提交到仓库
 
 当前表结构包括：
 
