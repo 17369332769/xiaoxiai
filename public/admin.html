@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小希 · 运营后台</title>
+  <style>
+    :root { --pink: #ff7597; --bg: #150e22; --panel: #1f1730; --border: #2e2440; --muted: #9a8fb0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; background: var(--bg); color: #ece6f5; }
+    header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 18px; margin: 0; }
+    .wrap { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .login-box { max-width: 380px; margin: 80px auto; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
+    input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #100a1c; color: #fff; font-size: 14px; }
+    button { cursor: pointer; border: 1px solid var(--pink); background: rgba(255,117,151,0.15); color: var(--pink); padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+    button:hover { background: var(--pink); color: #fff; }
+    button.ghost { border-color: var(--border); color: var(--muted); background: transparent; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+    .stat .label { font-size: 12px; color: var(--muted); }
+    .stat .value { font-size: 24px; font-weight: 700; margin-top: 6px; color: var(--pink); }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+    .panel h2 { font-size: 15px; margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; }
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .scroll { overflow-x: auto; max-height: 360px; overflow-y: auto; }
+    .tag { font-size: 11px; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); }
+    .err { color: #ff7597; margin-top: 10px; font-size: 13px; }
+    .hide { display: none; }
+  </style>
+</head>
+<body>
+  <div id="login" class="login-box">
+    <h1 style="margin-top:0;">小希 · 运营后台</h1>
+    <p style="color:var(--muted);font-size:13px;">请输入管理员令牌 (ADMIN_TOKEN)。</p>
+    <input id="token" type="password" placeholder="ADMIN_TOKEN" />
+    <div style="margin-top:14px;"><button onclick="doLogin()">进入后台</button></div>
+    <div id="loginErr" class="err"></div>
+  </div>
+
+  <div id="dash" class="hide">
+    <header>
+      <h1>💖 小希运营后台</h1>
+      <button class="ghost" onclick="refreshAll()">刷新数据</button>
+      <button class="ghost" onclick="logout()">退出</button>
+      <span id="onlineNow" class="tag"></span>
+    </header>
+    <div class="wrap">
+      <div id="stats" class="grid"></div>
+
+      <div class="panel">
+        <h2>📣 发布运营公告</h2>
+        <div class="row">
+          <input id="annText" placeholder="公告内容（最多 200 字）" style="flex:1;min-width:240px;" />
+          <button onclick="publishAnnouncement()">发布</button>
+        </div>
+        <div id="annList" class="scroll"></div>
+      </div>
+
+      <div class="panel">
+        <h2>🧾 最近订单（可退款）</h2>
+        <div class="scroll"><table id="ordersTbl"></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>👥 最近用户</h2>
+        <div class="scroll"><table id="usersTbl"></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>📊 最近行为事件</h2>
+        <div class="scroll"><table id="eventsTbl"></table></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('xxa_admin_token') || '';
+
+    async function api(path, body) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify(body || {}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) {
+        const err = new Error(data?.error?.message || '请求失败');
+        err.code = data?.error?.code;
+        throw err;
+      }
+      return data;
+    }
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+    async function doLogin() {
+      token = document.getElementById('token').value.trim();
+      try {
+        await api('/api/admin/stats');
+        localStorage.setItem('xxa_admin_token', token);
+        document.getElementById('login').classList.add('hide');
+        document.getElementById('dash').classList.remove('hide');
+        refreshAll();
+      } catch (e) {
+        document.getElementById('loginErr').textContent = e.code === 'ADMIN_DISABLED'
+          ? '后台未启用：请在后端设置 ADMIN_TOKEN 环境变量。'
+          : '令牌无效，请重试。';
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('xxa_admin_token');
+      location.reload();
+    }
+
+    async function refreshAll() {
+      try {
+        const { stats } = await api('/api/admin/stats');
+        document.getElementById('onlineNow').textContent = '当前在线 ' + stats.onlineNow + ' 人';
+        const m = stats.milestones || {};
+        document.getElementById('stats').innerHTML = [
+          ['总用户', stats.totalUsers], ['今日新增', stats.newUsersToday], ['DAU', stats.dau],
+          ['次日留存', stats.retentionRate + '%'], ['付费用户', stats.payingUsers],
+          ['付费转化', stats.payConversion + '%'], ['总营收(¥)', stats.totalRevenue], ['ARPPU(¥)', stats.arppu],
+          ['首次对话', m.firstChat], ['首次签到', m.firstCheckin], ['首次送礼', m.firstGift], ['首次打赏/充值', m.firstTip],
+        ].map(([k, v]) => `<div class="stat"><div class="label">${k}</div><div class="value">${esc(v)}</div></div>`).join('');
+
+        const { broadcasts } = await api('/api/admin/broadcasts');
+        document.getElementById('annList').innerHTML = broadcasts.map((b) =>
+          `<div class="row"><span class="tag">${esc(b.type)}</span><span style="flex:1">${esc(b.text)}</span>` +
+          (b.type === 'announcement' ? `<button class="ghost" onclick="deactivate('${esc(b.id)}')">下架</button>` : '') + `</div>`
+        ).join('') || '<div style="color:var(--muted)">暂无</div>';
+
+        const { orders } = await api('/api/admin/orders');
+        document.getElementById('ordersTbl').innerHTML =
+          '<tr><th>订单号</th><th>用户</th><th>金额</th><th>币</th><th>方式</th><th>状态</th><th>时间</th><th></th></tr>' +
+          orders.map((o) => `<tr><td>${esc(o.outTradeNo)}</td><td>${esc(o.userId)}</td><td>¥${esc(o.amount)}</td><td>${esc(o.coins)}</td><td>${esc(o.paymentMethod)}</td><td>${esc(o.status)}</td><td>${esc(o.createdAt)}</td>` +
+            `<td>${o.status === 'paid' ? `<button class="ghost" onclick="refund('${esc(o.id)}')">退款</button>` : ''}</td></tr>`).join('');
+
+        const { users } = await api('/api/admin/users');
+        document.getElementById('usersTbl').innerHTML =
+          '<tr><th>ID</th><th>等级</th><th>好感</th><th>币</th><th>连签</th><th>连登</th><th>创建</th></tr>' +
+          users.map((u) => `<tr><td>${esc(u.id)}</td><td>${esc(u.level)}</td><td>${esc(u.affection)}</td><td>${esc(u.coins)}</td><td>${esc(u.checkin_streak)}</td><td>${esc(u.login_streak)}</td><td>${esc(u.createdAt)}</td></tr>`).join('');
+
+        const { events } = await api('/api/admin/events');
+        document.getElementById('eventsTbl').innerHTML =
+          '<tr><th>时间</th><th>用户</th><th>类型</th><th>详情</th></tr>' +
+          events.map((e) => `<tr><td>${esc(e.timestamp)}</td><td>${esc(e.user_id)}</td><td>${esc(e.type)}</td><td>${esc(e.payload)}</td></tr>`).join('');
+      } catch (e) {
+        if (e.code === 'ADMIN_FORBIDDEN') logout();
+      }
+    }
+
+    async function publishAnnouncement() {
+      const el = document.getElementById('annText');
+      if (!el.value.trim()) return;
+      await api('/api/admin/announcement', { text: el.value.trim() });
+      el.value = '';
+      refreshAll();
+    }
+    async function deactivate(id) { await api('/api/admin/announcement/deactivate', { id }); refreshAll(); }
+    async function refund(orderId) {
+      if (!confirm('确认对该订单退款？将扣回已发放的爱心币。')) return;
+      await api('/api/admin/order/refund', { orderId });
+      refreshAll();
+    }
+
+    if (token) {
+      api('/api/admin/stats').then(() => {
+        document.getElementById('login').classList.add('hide');
+        document.getElementById('dash').classList.remove('hide');
+        refreshAll();
+      }).catch(() => { localStorage.removeItem('xxa_admin_token'); });
+    }
+  </script>
+</body>
+</html>

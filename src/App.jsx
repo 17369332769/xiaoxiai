@@ -5,30 +5,56 @@ import MainScreen from './components/MainScreen';
 import ChatBox from './components/ChatBox';
 import ActionMenu from './components/ActionMenu';
 import ShopModal from './components/ShopModal';
+import WalletModal from './components/WalletModal';
+import AuthModal from './components/AuthModal';
+import MemoryModal from './components/MemoryModal';
 import CelebrateEffect from './components/CelebrateEffect';
 import NotificationCenter from './components/NotificationCenter';
 import SyncStatusBanner from './components/SyncStatusBanner';
 
 function App() {
   const store = useGameStore();
-  
+
   // Modal control states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('shop'); // 'shop' or 'tipping'
   const [shopType, setShopType] = useState('food'); // 'food' or 'gift'
   const [relationshipCardFocusToken, setRelationshipCardFocusToken] = useState(0);
+  const [isWalletOpen, setIsWalletOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+
+  // Open wallet / transaction history and refresh the ledger
+  const openWallet = () => {
+    setIsWalletOpen(true);
+    store.loadTransactions();
+    store.track('open_wallet');
+  };
+
+  // Open memory center and refresh the memory list
+  const openMemory = () => {
+    setIsMemoryOpen(true);
+    store.loadMemories();
+  };
+
+  const openAuth = () => {
+    setIsAuthOpen(true);
+    store.track('open_auth');
+  };
 
   // Open shop with active tab
   const openShop = (type) => {
     setModalMode('shop');
     setShopType(type);
     setIsModalOpen(true);
+    store.track('open_shop', { shopType: type });
   };
 
   // Open tipping modal
   const openTipping = () => {
     setModalMode('tipping');
     setIsModalOpen(true);
+    store.track('open_tipping');
   };
 
   const focusRelationshipCard = () => {
@@ -113,6 +139,11 @@ function App() {
             claimTaskReward={store.claimTaskReward}
             openShop={openShop}
             openTipping={openTipping}
+            openWallet={openWallet}
+            openMemory={openMemory}
+            openAuth={openAuth}
+            checkinStreak={store.checkinStreak}
+            accountBound={store.account?.bound}
             isInteractionLocked={store.isSyncing}
             claimingTaskIds={store.claimingTaskIds}
             lastFailedAction={store.lastFailedAction}
@@ -141,6 +172,39 @@ function App() {
         lastFailedAction={store.lastFailedAction}
         retryLastFailedAction={store.retryLastFailedAction}
         notify={store.notify}
+      />
+
+      {/* Wallet / Transaction History Dialog */}
+      <WalletModal
+        isOpen={isWalletOpen}
+        onClose={() => setIsWalletOpen(false)}
+        coins={store.coins}
+        transactions={store.transactions}
+        isLoadingTransactions={store.isLoadingTransactions}
+        loadTransactions={store.loadTransactions}
+      />
+
+      {/* Account Center Dialog */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        account={store.account}
+        authPending={store.authPending}
+        registerAccount={store.registerAccount}
+        loginAccount={store.loginAccount}
+        logoutAccount={store.logoutAccount}
+        notify={store.notify}
+      />
+
+      {/* Long-term Memory Dialog */}
+      <MemoryModal
+        isOpen={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
+        memories={store.memories}
+        memorySummary={store.memorySummary}
+        isLoadingMemories={store.isLoadingMemories}
+        loadMemories={store.loadMemories}
+        deleteMemory={store.deleteMemory}
       />
 
       {/* Footer Branding */}

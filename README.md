@@ -2,14 +2,19 @@
 
 一个基于 `React + Vite + Express + SQLite` 的 AI 陪伴网页应用。
 
-当前版本已经具备一个可运行的 Demo 闭环：
+当前版本已经具备一个较完整的产品闭环：
 
 - 匿名用户自动创建与本地身份持久化
-- AI 对话与聊天记录保存
+- 正式账号体系（注册 / 登录 / 游客绑定 / 跨设备同步）
+- AI 对话与聊天记录保存（含人设深化、时段/节日问候、低状态剧情约束、前端打字机效果）
 - 好感度、等级、体力、心情成长系统
-- 每日签到与每日任务
-- 喂食、送礼、打赏三类互动
-- 长期记忆摘要与用户事实提炼
+- 每日签到（连续签到奖励）与每日任务 + 成长成就任务
+- 喂食、送礼互动，以及真实订单支付闭环（下单 → 回调验签 → 幂等发币 → 查询 → 退款）
+- 长期记忆摘要与用户事实提炼，支持记忆上限/优先级与人工清理
+- 真实在线人数与真实广播（事件驱动 + 运营公告）
+- 行为埋点与数据化运营指标（DAU / 留存 / 付费转化 / ARPPU）
+- 运营后台（`/admin.html`：指标、用户、订单退款、公告管理）
+- 内容安全过滤、统一错误返回、限流、密钥管理
 
 ## 项目结构
 
@@ -69,6 +74,11 @@ Copy-Item backend/.env.example backend/.env
 - `LOG_LEVEL`：后端日志级别，默认 `info`
 - `LOG_REQUESTS`：是否打印请求日志，默认 `true`
 - `XIAOXIAI_DB_PATH`：自定义 SQLite 文件路径
+- `EXTRA_BLOCKED_WORDS`：聊天内容安全过滤的额外屏蔽词（逗号分隔），追加到内置词表
+- `PRESENCE_BASELINE`：在真实在线人数基础上叠加的展示基数，默认 `0`
+- `PAYMENT_SECRET`：支付回调签名密钥（HMAC），生产必须覆盖
+- `AUTH_SECRET`：账号登录令牌签名密钥（HMAC），生产必须覆盖
+- `ADMIN_TOKEN`：运营后台令牌；留空则完全禁用后台（`/admin.html` 与 `/api/admin/*`）
 - `OPENAI_API_KEY`：模型服务 API Key
 - `OPENAI_API_BASE_URL`：兼容 OpenAI SDK 的接口地址
 - `OPENAI_MODEL_NAME`：模型名称，例如 `gpt-4o-mini` 或 `deepseek-chat`
@@ -117,13 +127,20 @@ npm start
 
 ## 主要接口
 
-- `POST /api/user/sync`：同步用户资料、任务、聊天记录
+- `POST /api/user/sync`：同步用户资料、任务、聊天记录、账号绑定状态
 - `POST /api/chat`：发送聊天消息并获取 AI 回复
-- `POST /api/checkin`：每日签到
+- `POST /api/checkin`：每日签到（含连续签到奖励）
 - `POST /api/task/claim`：领取任务奖励
 - `POST /api/action/feed`：喂食小希
 - `POST /api/action/gift`：赠送礼物
-- `POST /api/action/tip`：模拟打赏
+- `POST /api/action/tip`：即时模拟打赏（内部创建并结算真实订单）
+- `POST /api/transactions`：查询爱心币流水（消费记录 / 钱包账单）
+- `POST /api/order/create`、`POST /api/payment/callback`、`POST /api/order/query`：真实支付下单 / 回调验签 / 订单查询
+- `POST /api/auth/register`、`/api/auth/login`、`/api/auth/bind`：账号注册 / 登录 / 绑定
+- `POST /api/presence`、`POST /api/broadcasts`：真实在线人数与广播
+- `POST /api/memory/list`、`/api/memory/delete`、`/api/memory/clear`：长期记忆查看与清理
+- `POST /api/analytics/track`：前端行为埋点
+- `POST /api/admin/*`：运营后台接口（需 `x-admin-token`）
 
 统一返回约定：
 
@@ -145,13 +162,19 @@ SQLite 文件位置：
 - `chat_messages`
 - `tasks`
 - `user_memories`
+- `transactions`
+- `orders`
+- `events`
+- `broadcasts`
+- `accounts`
 
 ## 当前实现说明
 
-- 打赏仍然是“服务端校验过的模拟支付”，不是真实支付闭环。
-- 在线人数和广播目前仍是前端模拟展示，不是真实全站数据。
-- 记忆整理依赖外部大模型；未配置 API Key 时不会执行真实记忆提炼。
-- 每日任务已经支持按天重置。
+- 支付已实现完整订单闭环（下单 / 回调验签 / 幂等发币 / 查询 / 退款）。受限于演示环境没有真实支付商户，回调由“模拟网关”发起并以 `PAYMENT_SECRET` 进行 HMAC 验签——业务流程是真实的，缺的只是接入真实微信/支付宝商户号。
+- 在线人数为基于心跳的真实统计（可叠加 `PRESENCE_BASELINE` 展示基数）；广播由真实事件（打赏/充值、戒指送礼、升级）与运营公告驱动。
+- 记忆整理依赖外部大模型；未配置 API Key 时不会执行真实记忆提炼，但记忆的上限/优先级与人工清理（查看/删除）始终可用。
+- 每日任务按天重置；成长成就任务长期累计不重置。
+- 运营后台位于 `/admin.html`，需要配置 `ADMIN_TOKEN` 才会启用。
 
 ## 安全提醒
 

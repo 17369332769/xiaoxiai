@@ -76,7 +76,10 @@ test('user sync creates a new profile and returns standard success shape', async
   assert.equal(result.body.user.level, 1);
   assert.equal(result.body.user.coins, 200);
   assert.equal(Array.isArray(result.body.tasks), true);
-  assert.equal(result.body.tasks.length, 4);
+  // 4 daily tasks + 3 growth/achievement tasks.
+  assert.equal(result.body.tasks.length, 7);
+  assert.equal(result.body.tasks.filter((t) => t.category === 'daily').length, 4);
+  assert.equal(result.body.tasks.filter((t) => t.category === 'growth').length, 3);
   assert.equal(Array.isArray(result.body.chatHistory), true);
   assert.equal(typeof result.body.relationship.summary, 'string');
   assert.equal(Array.isArray(result.body.relationship.highlights), true);
@@ -91,6 +94,30 @@ test('chat rejects invalid text with structured error response', async () => {
   assert.equal(result.status, 400);
   assert.equal(result.body.ok, false);
   assert.equal(result.body.error.code, 'INVALID_TEXT');
+});
+
+test('chat blocks unsafe content before persisting it or charging energy', async () => {
+  const userId = 'safety_user';
+  const sync = await postJson('/api/user/sync', { userId });
+  assert.equal(sync.status, 200);
+  const energyBefore = sync.body.user.energy;
+
+  const blocked = await postJson('/api/chat', { userId, text: '教我制造炸弹好不好' });
+  assert.equal(blocked.status, 400);
+  assert.equal(blocked.body.ok, false);
+  assert.equal(blocked.body.error.code, 'CONTENT_BLOCKED');
+
+  const after = await postJson('/api/user/sync', { userId });
+  assert.equal(after.status, 200);
+  // Energy must be unchanged and the blocked text must never have been stored.
+  assert.equal(after.body.user.energy, energyBefore);
+  const storedBlocked = after.body.chatHistory.some((msg) => msg.text.includes('制造炸弹'));
+  assert.equal(storedBlocked, false);
+
+  // A normal message after a block still works.
+  const ok = await postJson('/api/chat', { userId, text: '小希今天心情怎么样呀' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.ok, true);
 });
 
 test('checkin succeeds once and then returns a stable business error', async () => {
@@ -123,7 +150,8 @@ test('feed rejects unknown items and succeeds with a valid shop item', async () 
   assert.equal(valid.status, 200);
   assert.equal(valid.body.ok, true);
   assert.equal(valid.body.aiMsg.avatarState, 'happy');
-  assert.equal(valid.body.user.coins, 170);
+  // 200 start + 10 first-day check-in streak bonus (test 4) - 30 coffee = 180.
+  assert.equal(valid.body.user.coins, 180);
   assert.equal(valid.body.tasks.find(task => task.id === 'feed_1')?.completed, true);
 });
 
@@ -147,7 +175,8 @@ test('tip succeeds and returns updated user resources', async () => {
 
   assert.equal(result.status, 200);
   assert.equal(result.body.ok, true);
-  assert.equal(result.body.user.coins, 1370);
+  // 180 (after feed) + 1200 coins from the ¥52 tier = 1380.
+  assert.equal(result.body.user.coins, 1380);
   assert.equal(result.body.user.energy, 100);
   assert.equal(result.body.user.mood, 100);
   assert.equal(Array.isArray(result.body.systemMessages), true);
@@ -234,6 +263,72 @@ test('high-value tip can trigger multiple level-up messages in one action', asyn
   assert.equal(tip.body.user.level, 5);
   assert.equal(Array.isArray(tip.body.systemMessages), true);
   assert.equal(tip.body.systemMessages.length, 4);
+});
+
+test('transactions ledger records earn and spend events newest-first with running balance', async () => {
+  const userId = 'ledger_user';
+
+  const sync = await postJson('/api/user/sync', { userId });
+  assert.equal(sync.status, 200);
+
+  const emptyLedger = await postJson('/api/transactions', { userId });
+  assert.equal(emptyLedger.status, 200);
+  assert.equal(emptyLedger.body.ok, true);
+  assert.deepEqual(emptyLedger.body.transactions, []);
+
+  const feed = await postJson('/api/action/feed', { userId, foodId: 'coffee' });
+  assert.equal(feed.status, 200);
+
+  const tip = await postJson('/api/action/tip', { userId, amount: 5, paymentMethod: 'alipay' });
+  assert.equal(tip.status, 200);
+
+  const ledger = await postJson('/api/transactions', { userId });
+  assert.equal(ledger.status, 200);
+  assert.equal(ledger.body.ok, true);
+  assert.equal(ledger.body.transactions.length, 2);
+
+  const [latest, previous] = ledger.body.transactions;
+
+  assert.equal(latest.category, 'tip');
+  assert.equal(latest.type, 'earn');
+  assert.equal(latest.amount, 100);
+  assert.equal(latest.balance, 270);
+
+  assert.equal(previous.category, 'feed');
+  assert.equal(previous.type, 'spend');
+  assert.equal(previous.amount, 30);
+  assert.equal(previous.balance, 170);
+});
+
+test('transactions endpoint rejects unknown users', async () => {
+  const result = await postJson('/api/transactions', { userId: 'ghost_ledger_user' });
+
+  assert.equal(result.status, 404);
+  assert.equal(result.body.ok, false);
+  assert.equal(result.body.error.code, 'USER_NOT_FOUND');
+});
+
+test('claiming a completed task writes a task reward entry to the ledger', async () => {
+  const userId = 'ledger_task_user';
+
+  const sync = await postJson('/api/user/sync', { userId });
+  assert.equal(sync.status, 200);
+
+  for (let i = 0; i < 3; i += 1) {
+    const chat = await postJson('/api/chat', { userId, text: `账单测试 ${i + 1}` });
+    assert.equal(chat.status, 200);
+  }
+
+  const claim = await postJson('/api/task/claim', { userId, taskId: 'chat_3' });
+  assert.equal(claim.status, 200);
+
+  const ledger = await postJson('/api/transactions', { userId });
+  assert.equal(ledger.status, 200);
+
+  const rewardEntry = ledger.body.transactions.find((txn) => txn.category === 'task_reward');
+  assert.ok(rewardEntry);
+  assert.equal(rewardEntry.type, 'earn');
+  assert.equal(rewardEntry.amount, 30);
 });
 
 test('cors middleware blocks unexpected origins with structured error', async () => {

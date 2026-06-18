@@ -1,6 +1,7 @@
 import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
 import { dbGet, dbRun, dbAll } from './db.js';
+import { enforceMemoryCap, upsertMemory } from './memoryStore.js';
 import { createLogger } from './logger.js';
 
 dotenv.config();
@@ -495,19 +496,14 @@ Instructions:
       logger.debug('Updated users.summary from memory consolidation', { userId });
     }
 
-    // 5. Update the DB: Key-Value memories
+    // 5. Update the DB: Key-Value memories (upsert reinforces weight on conflict)
     if (result.memories && typeof result.memories === 'object') {
       for (const [key, value] of Object.entries(result.memories)) {
         if (!key || !value) continue;
-        
-        // SQLite ON CONFLICT UPSERT syntax
-        await dbRun(`
-          INSERT INTO user_memories (user_id, memory_key, memory_value, updated_at) 
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(user_id, memory_key) 
-          DO UPDATE SET memory_value = excluded.memory_value, updated_at = CURRENT_TIMESTAMP
-        `, [userId, key.trim(), value.trim()]);
+        await upsertMemory(userId, key.trim(), value.trim());
       }
+      // Keep the memory card bounded: evict lowest-priority facts beyond the cap.
+      await enforceMemoryCap(userId);
       logger.debug('Updated user_memories from memory consolidation', {
         userId,
         memoryCount: Object.keys(result.memories).length,

@@ -1,5 +1,8 @@
 import { dbAll, dbGet, dbRun } from './db.js';
-import { DEFAULT_TASKS } from './gameConfig.js';
+import { DAILY_TASK_IDS, DEFAULT_TASKS, getCheckinStreakReward } from './gameConfig.js';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('gameplay');
 
 export function getNowTimestamp() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -29,7 +32,7 @@ export function createChatMessage(id, sender, text, extra = {}) {
 
 export async function loadFormattedTasks(userId) {
   const tasks = await dbAll(
-    'SELECT task_id as id, name, reward, progress, target, completed, claimed FROM tasks WHERE user_id = ?',
+    "SELECT task_id as id, name, reward, progress, target, completed, claimed, COALESCE(category, 'daily') as category FROM tasks WHERE user_id = ? ORDER BY category DESC, rowid ASC",
     [userId]
   );
 
@@ -39,13 +42,14 @@ export async function loadFormattedTasks(userId) {
 export async function ensureUserTasks(userId) {
   for (const task of DEFAULT_TASKS) {
     await dbRun(
-      `INSERT INTO tasks (user_id, task_id, name, reward, progress, target, completed, claimed)
-       VALUES (?, ?, ?, ?, 0, ?, 0, 0)
+      `INSERT INTO tasks (user_id, task_id, name, reward, progress, target, completed, claimed, category)
+       VALUES (?, ?, ?, ?, 0, ?, 0, 0, ?)
        ON CONFLICT(user_id, task_id) DO UPDATE SET
          name = excluded.name,
          reward = excluded.reward,
-         target = excluded.target`,
-      [userId, task.id, task.name, task.reward, task.target]
+         target = excluded.target,
+         category = excluded.category`,
+      [userId, task.id, task.name, task.reward, task.target, task.category || 'daily']
     );
   }
 }
@@ -56,13 +60,49 @@ export async function resetDailyTasksIfNeeded(userId, user) {
     return;
   }
 
+  const placeholders = DAILY_TASK_IDS.map(() => '?').join(', ');
   await dbRun(
     `UPDATE tasks
      SET progress = 0, completed = 0, claimed = 0
-     WHERE user_id = ? AND task_id IN ('checkin', 'chat_3', 'feed_1', 'gift_1')`,
-    [userId]
+     WHERE user_id = ? AND task_id IN (${placeholders})`,
+    [userId, ...DAILY_TASK_IDS]
   );
   await dbRun('UPDATE users SET last_task_reset = ? WHERE id = ?', [todayKey, userId]);
+}
+
+// Growth tasks tracked by an absolute value (e.g. relationship level) rather
+// than an increment. We never move progress backwards.
+export async function syncAbsoluteTask(userId, taskId, value) {
+  const task = await dbGet('SELECT * FROM tasks WHERE user_id = ? AND task_id = ?', [userId, taskId]);
+  if (!task) return;
+  const newProgress = Math.min(task.target, Math.max(task.progress, Math.floor(value)));
+  const completed = newProgress >= task.target ? 1 : 0;
+  if (newProgress !== task.progress || completed !== task.completed) {
+    await dbRun(
+      'UPDATE tasks SET progress = ?, completed = ? WHERE user_id = ? AND task_id = ?',
+      [newProgress, completed, userId, taskId]
+    );
+  }
+}
+
+// Apply a daily check-in and advance the continuous streak counter. Returns the
+// resulting streak length and the streak bonus coins to award.
+export function computeCheckinStreak(previousStreak, lastCheckin, todayKey, yesterdayKey) {
+  let streak;
+  if (lastCheckin === yesterdayKey) {
+    streak = (Number.isFinite(previousStreak) ? previousStreak : 0) + 1;
+  } else if (lastCheckin === todayKey) {
+    streak = Number.isFinite(previousStreak) && previousStreak > 0 ? previousStreak : 1;
+  } else {
+    streak = 1;
+  }
+  return { streak, bonus: getCheckinStreakReward(streak) };
+}
+
+export function getYesterdayKey() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toLocaleDateString('zh-CN');
 }
 
 export async function incrementTask(userId, taskId, amount = 1) {
@@ -77,8 +117,72 @@ export async function incrementTask(userId, taskId, amount = 1) {
   }
 }
 
+// Atomic coin mutation helpers. Using a single `coins = coins + ?` / guarded
+// `coins = coins - ?` statement avoids the read-modify-write lost-update race
+// that a separate SELECT-then-UPDATE would have under concurrent requests.
+export async function creditCoins(userId, amount) {
+  const result = await dbRun('UPDATE users SET coins = coins + ? WHERE id = ?', [amount, userId]);
+  if (result.changes === 0) return null;
+  const row = await dbGet('SELECT coins FROM users WHERE id = ?', [userId]);
+  return row ? row.coins : null;
+}
+
+// Guarded debit: only succeeds (changes === 1) when the balance can cover it,
+// so two concurrent spends can never drive coins negative.
+export async function debitCoins(userId, amount) {
+  const result = await dbRun(
+    'UPDATE users SET coins = coins - ? WHERE id = ? AND coins >= ?',
+    [amount, userId, amount]
+  );
+  if (result.changes === 0) return { ok: false, balance: null };
+  const row = await dbGet('SELECT coins FROM users WHERE id = ?', [userId]);
+  return { ok: true, balance: row ? row.coins : null };
+}
+
+// Floored refund/decrement (never below zero), atomic.
+export async function refundCoins(userId, amount) {
+  await dbRun('UPDATE users SET coins = MAX(0, coins - ?) WHERE id = ?', [amount, userId]);
+  const row = await dbGet('SELECT coins FROM users WHERE id = ?', [userId]);
+  return row ? row.coins : 0;
+}
+
+export async function recordTransaction(userId, { type, category, amount, balance, description }) {
+  const id = `txn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await dbRun(
+      'INSERT INTO transactions (id, user_id, type, category, amount, balance, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, userId, type, category, amount, balance, description]
+    );
+    return id;
+  } catch (error) {
+    // The ledger is a best-effort audit log; users.coins is the source of truth.
+    // A logging-table failure must never turn a financially successful coin
+    // operation (already persisted) into a 500 for the user.
+    logger.error('Failed to record transaction (ledger desync possible)', {
+      userId,
+      category,
+      type,
+      amount,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+export async function loadTransactions(userId, limit = 30) {
+  return dbAll(
+    `SELECT id, type, category, amount, balance, description,
+            strftime('%m-%d %H:%M', created_at, 'localtime') as timestamp
+     FROM transactions
+     WHERE user_id = ?
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT ?`,
+    [userId, limit]
+  );
+}
+
 export async function addAffection(userId, user, points) {
-  let newAffection = user.affection + points;
+  let newAffection = Math.max(0, user.affection + points);
   let newLevel = user.level;
   const systemMessages = [];
 

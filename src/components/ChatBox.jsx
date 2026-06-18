@@ -14,8 +14,28 @@ const QUICK_PROMPTS = [
 ];
 
 // Sub-component for AI messages (with interactive avatar and dynamic reactions)
-function AiMessage({ msg }) {
+function AiMessage({ msg, animate = false }) {
   const [hearts, setHearts] = useState([]);
+  const fullText = msg.text || '';
+  const [displayText, setDisplayText] = useState(animate ? '' : fullText);
+
+  // Typewriter reveal for freshly-arrived replies; history renders instantly.
+  useEffect(() => {
+    if (!animate) {
+      setDisplayText(fullText);
+      return undefined;
+    }
+    setDisplayText('');
+    let index = 0;
+    const timer = setInterval(() => {
+      index += 1;
+      setDisplayText(fullText.slice(0, index));
+      if (index >= fullText.length) {
+        clearInterval(timer);
+      }
+    }, 30);
+    return () => clearInterval(timer);
+  }, [animate, fullText]);
 
   const getAvatarSrc = (avatarState) => {
     switch (avatarState) {
@@ -73,7 +93,10 @@ function AiMessage({ msg }) {
         ))}
       </div>
       <div className="bubble bubble-ai">
-        {msg.text}
+        {displayText}
+        {animate && displayText.length < fullText.length && (
+          <span className="typing-caret" aria-hidden="true">▍</span>
+        )}
         <div className="message-timestamp">
           {msg.timestamp}
         </div>
@@ -169,7 +192,7 @@ export default function ChatBox({
 
       {/* Message Scroll View */}
       <div className="chat-messages">
-        {chatHistory.map((msg) => {
+        {chatHistory.map((msg, idx) => {
           if (msg.sender === 'user') {
             return <UserMessage key={msg.id} msg={msg} />;
           } else if (msg.sender === 'system') {
@@ -193,7 +216,10 @@ export default function ChatBox({
               </div>
             );
           } else {
-            return <AiMessage key={msg.id} msg={msg} />;
+            // Only the latest AI bubble types out; once a newer message arrives
+            // this one re-renders with animate=false and shows in full.
+            const isLatestReply = idx === chatHistory.length - 1;
+            return <AiMessage key={msg.id} msg={msg} animate={isLatestReply} />;
           }
         })}
         <div ref={messagesEndRef} />
