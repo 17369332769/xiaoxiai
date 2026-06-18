@@ -1,7 +1,7 @@
 import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
 import { dbGet, dbRun, dbAll } from './db.js';
-import { enforceMemoryCap, upsertMemory } from './memoryStore.js';
+import { enforceMemoryCap, pruneStaleMemories, upsertMemory } from './memoryStore.js';
 import { createLogger } from './logger.js';
 
 dotenv.config();
@@ -409,16 +409,15 @@ export async function reflectAndConsolidate(userId) {
         await dbRun('UPDATE users SET summary = ? WHERE id = ?', [localResult.summary, userId]);
       }
 
+      // Route the local fallback through upsertMemory so it shares the same
+      // validation, reinforcement and capping guarantees as the LLM path,
+      // instead of writing raw and bypassing the cap.
       for (const [key, value] of Object.entries(localResult.memories)) {
-        if (!key || !value) continue;
-
-        await dbRun(`
-          INSERT INTO user_memories (user_id, memory_key, memory_value, updated_at) 
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(user_id, memory_key) 
-          DO UPDATE SET memory_value = excluded.memory_value, updated_at = CURRENT_TIMESTAMP
-        `, [userId, key.trim(), value.trim()]);
+        await upsertMemory(userId, key, value);
       }
+      // Keep the memory card bounded and let stale low-value facts expire.
+      await pruneStaleMemories(userId);
+      await enforceMemoryCap(userId);
 
       await syncRelationshipMemoryEvents(
         userId,
@@ -496,13 +495,15 @@ Instructions:
       logger.debug('Updated users.summary from memory consolidation', { userId });
     }
 
-    // 5. Update the DB: Key-Value memories (upsert reinforces weight on conflict)
+    // 5. Update the DB: Key-Value memories (upsert validates input and reinforces
+    // weight on conflict; invalid/empty entries are skipped inside upsertMemory)
     if (result.memories && typeof result.memories === 'object') {
       for (const [key, value] of Object.entries(result.memories)) {
-        if (!key || !value) continue;
-        await upsertMemory(userId, key.trim(), value.trim());
+        await upsertMemory(userId, key, value);
       }
-      // Keep the memory card bounded: evict lowest-priority facts beyond the cap.
+      // Let stale low-value facts expire, then keep the card bounded by evicting
+      // the lowest-priority facts beyond the cap.
+      await pruneStaleMemories(userId);
       await enforceMemoryCap(userId);
       logger.debug('Updated user_memories from memory consolidation', {
         userId,

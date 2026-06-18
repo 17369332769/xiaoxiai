@@ -1,6 +1,9 @@
 import * as React from 'react';
 
-const { useState } = React;
+const { useState, useEffect, useRef, useCallback } = React;
+
+const ORDER_POLL_INTERVAL_MS = 1500;
+const ORDER_POLL_TIMEOUT_MS = 60000;
 
 export default function ShopModal({
   isOpen,
@@ -14,6 +17,9 @@ export default function ShopModal({
   feedXiaoxi,
   giftXiaoxi,
   tipXiaoxi,
+  createOrder,
+  queryOrder,
+  confirmPayment,
   activePurchaseKey,
   isTipping = false,
   lastFailedAction,
@@ -24,8 +30,73 @@ export default function ShopModal({
   const [selectedTip, setSelectedTip] = useState(TIPPING_TIERS[0]);
   const [payChannel, setPayChannel] = useState('wechat'); // 'wechat' or 'alipay'
   const [isProcessing, setIsProcessing] = useState(false);
-  const isModalBusy = isProcessing || Boolean(activePurchaseKey) || isTipping;
+  // Real scan-to-pay flow state. `activeOrder` holds the created order +
+  // pre-signed callback while we show the QR placeholder and poll for status.
+  const [activeOrder, setActiveOrder] = useState(null);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
+  const [orderStatus, setOrderStatus] = useState('idle'); // idle | pending | paid | timeout
+  const pollTimerRef = useRef(null);
+  const pollDeadlineRef = useRef(0);
+  const activeOrderRef = useRef(null);
+  const isScanning = Boolean(activeOrder);
+  const isModalBusy =
+    isProcessing || isCreatingOrder || isConfirmingPayment || isScanning || Boolean(activePurchaseKey) || isTipping;
   const currentItems = activeTab === 'food' ? FOOD_ITEMS : GIFT_ITEMS;
+
+  const clearPollTimer = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  // ---- Real scan-to-pay flow (create order -> poll -> gateway callback) ----
+  const stopScanFlow = useCallback(() => {
+    clearPollTimer();
+    activeOrderRef.current = null;
+    setActiveOrder(null);
+    setOrderStatus('idle');
+  }, [clearPollTimer]);
+
+  // Poll /api/order/query until the backend reports the order as paid, or until
+  // the 60s deadline. Reschedules itself through a ref so the timer always calls
+  // the latest callback without referencing it before it is declared.
+  const pollOrderStatusRef = useRef(null);
+  const pollOrderStatus = useCallback(async () => {
+    const order = activeOrderRef.current;
+    if (!order) return;
+
+    const result = await queryOrder?.({ orderId: order.order.id });
+    if (!activeOrderRef.current || activeOrderRef.current.order.id !== order.order.id) {
+      return; // The order was replaced or cancelled while the query was in flight.
+    }
+
+    if (result?.status === 'paid') {
+      setOrderStatus('paid');
+      clearPollTimer();
+      return;
+    }
+
+    if (Date.now() >= pollDeadlineRef.current) {
+      setOrderStatus('timeout');
+      clearPollTimer();
+      return;
+    }
+
+    pollTimerRef.current = setTimeout(() => pollOrderStatusRef.current?.(), ORDER_POLL_INTERVAL_MS);
+  }, [queryOrder, clearPollTimer]);
+  useEffect(() => {
+    pollOrderStatusRef.current = pollOrderStatus;
+  }, [pollOrderStatus]);
+
+  // Always clear the polling timer on unmount / modal close to avoid leaks.
+  useEffect(() => () => clearPollTimer(), [clearPollTimer]);
+  useEffect(() => {
+    if (!isOpen) {
+      clearPollTimer();
+    }
+  }, [isOpen, clearPollTimer]);
 
   if (!isOpen) return null;
 
@@ -65,7 +136,61 @@ export default function ShopModal({
     }, 1500); // Simulated delay
   };
 
+  const handleStartRealPayment = async () => {
+    if (isModalBusy || !createOrder) {
+      return;
+    }
+
+    setIsCreatingOrder(true);
+    try {
+      const data = await createOrder(selectedTip.amount, payChannel);
+      if (!data) {
+        return; // createOrder already surfaced the error via notify.
+      }
+
+      activeOrderRef.current = data;
+      setActiveOrder(data);
+      setOrderStatus('pending');
+      pollDeadlineRef.current = Date.now() + ORDER_POLL_TIMEOUT_MS;
+      clearPollTimer();
+      pollTimerRef.current = setTimeout(pollOrderStatus, ORDER_POLL_INTERVAL_MS);
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  // "我已完成支付": replay the pre-signed gateway callback (idempotent on the
+  // backend, so repeat clicks are safe). On settlement the store refreshes the
+  // user snapshot, then we close the modal.
+  const handleConfirmRealPayment = async () => {
+    const order = activeOrderRef.current;
+    if (!order || isConfirmingPayment || !confirmPayment) {
+      return;
+    }
+
+    setIsConfirmingPayment(true);
+    try {
+      const data = await confirmPayment(order.simulatedCallback);
+      if (!data) {
+        return; // confirmPayment already surfaced the error via notify.
+      }
+
+      if (data.settled || data.alreadyPaid) {
+        notify?.(`充值成功！获得 ${order.coins} 爱心币~`, 'success', '充值成功');
+        stopScanFlow();
+        onClose();
+      }
+    } finally {
+      setIsConfirmingPayment(false);
+    }
+  };
+
   const handleRequestClose = () => {
+    if (isScanning) {
+      // Allow backing out of an unpaid scan without leaving a dangling poller.
+      stopScanFlow();
+      return;
+    }
     if (!isModalBusy) {
       onClose();
     }
@@ -237,76 +362,151 @@ export default function ShopModal({
               </div>
             )}
 
-            {/* Presets Grid */}
-            <div className="tipping-options">
-              {TIPPING_TIERS.map((tier, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedTip(tier)}
-                  disabled={isModalBusy}
-                  className={`tip-option-btn ${selectedTip.amount === tier.amount ? 'active' : ''}`}
-                >
-                  <div className="tip-option-amount">¥{tier.amount}</div>
-                  <div className="tip-option-label">{tier.label}</div>
-                  <div style={{ fontSize: '10px', color: 'var(--accent-gold)', marginTop: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span className="coin-icon"></span>+{tier.coins}
+            {!isScanning && (
+              <>
+                {/* Presets Grid */}
+                <div className="tipping-options">
+                  {TIPPING_TIERS.map((tier, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedTip(tier)}
+                      disabled={isModalBusy}
+                      className={`tip-option-btn ${selectedTip.amount === tier.amount ? 'active' : ''}`}
+                    >
+                      <div className="tip-option-amount">¥{tier.amount}</div>
+                      <div className="tip-option-label">{tier.label}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--accent-gold)', marginTop: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span className="coin-icon"></span>+{tier.coins}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Payment Channel Selector */}
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
+                  <div className="payment-channel-selector">
+                    <button
+                      onClick={() => setPayChannel('wechat')}
+                      disabled={isModalBusy}
+                      className={`pay-channel-btn ${payChannel === 'wechat' ? 'active wechat' : ''}`}
+                    >
+                      🟢 微信支付 (WeChat)
+                    </button>
+                    <button
+                      onClick={() => setPayChannel('alipay')}
+                      disabled={isModalBusy}
+                      className={`pay-channel-btn ${payChannel === 'alipay' ? 'active alipay' : ''}`}
+                    >
+                      🔵 支付宝 (Alipay)
+                    </button>
                   </div>
-                </button>
-              ))}
-            </div>
-
-            {/* Payment Channel Selector */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
-              <div className="payment-channel-selector">
-                <button
-                  onClick={() => setPayChannel('wechat')}
-                  disabled={isModalBusy}
-                  className={`pay-channel-btn ${payChannel === 'wechat' ? 'active wechat' : ''}`}
-                >
-                  🟢 微信支付 (WeChat)
-                </button>
-                <button
-                  onClick={() => setPayChannel('alipay')}
-                  disabled={isModalBusy}
-                  className={`pay-channel-btn ${payChannel === 'alipay' ? 'active alipay' : ''}`}
-                >
-                  🔵 支付宝 (Alipay)
-                </button>
-              </div>
-            </div>
-
-            {/* QR Code Scan Area */}
-            <div className="payment-qr-container">
-              <div className="payment-qr-wrapper">
-                {renderMockQR()}
-              </div>
-
-              <div className="payment-meta">
-                <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'white', marginBottom: '4px' }}>
-                  扫码打赏: ¥{selectedTip.amount} 元
                 </div>
-                <div>{selectedTip.desc}</div>
-                <div style={{ fontSize: '11px', color: 'var(--primary-pink)', marginTop: '4px' }}>
-                  【模拟支付】扫码或直接点击下方按钮完成
-                </div>
-              </div>
 
-              {/* Action Button */}
-              <button
-                onClick={handleMockPay}
-                disabled={isModalBusy}
-                className="btn-primary payment-status-sim"
-                style={{
-                  padding: '10px',
-                  width: '100%',
-                  fontSize: '14px',
-                  background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
-                  boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
-                }}
-              >
-                {(isProcessing || isTipping) ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
-              </button>
-            </div>
+                {/* QR Code Scan Area */}
+                <div className="payment-qr-container">
+                  <div className="payment-qr-wrapper">
+                    {renderMockQR()}
+                  </div>
+
+                  <div className="payment-meta">
+                    <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'white', marginBottom: '4px' }}>
+                      扫码打赏: ¥{selectedTip.amount} 元
+                    </div>
+                    <div>{selectedTip.desc}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--primary-pink)', marginTop: '4px' }}>
+                      【模拟支付】扫码或直接点击下方按钮完成
+                    </div>
+                  </div>
+
+                  {/* Action Button (instant settle shortcut, kept for compatibility) */}
+                  <button
+                    onClick={handleMockPay}
+                    disabled={isModalBusy}
+                    className="btn-primary payment-status-sim"
+                    style={{
+                      padding: '10px',
+                      width: '100%',
+                      fontSize: '14px',
+                      background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
+                      boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
+                    }}
+                  >
+                    {(isProcessing || isTipping) ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
+                  </button>
+
+                  {/* Real scan-to-pay entry: drives the actual order链路 */}
+                  <button
+                    onClick={handleStartRealPayment}
+                    disabled={isModalBusy}
+                    className="btn-secondary"
+                    style={{ padding: '10px', width: '100%', fontSize: '13px', marginTop: '10px' }}
+                  >
+                    {isCreatingOrder ? '正在生成订单...' : '📷 真实扫码支付 (创建订单)'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Real scan-to-pay state: QR placeholder + polling + confirm */}
+            {isScanning && (
+              <div className="payment-qr-container">
+                <div
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    wordBreak: 'break-all',
+                    background: 'rgba(0,0,0,0.3)',
+                    border: '1px dashed var(--primary-pink)',
+                    borderRadius: '10px',
+                    padding: '14px',
+                    color: '#f0e6f5',
+                    textAlign: 'center',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <div style={{ fontSize: '10px', color: 'var(--text-pink)', marginBottom: '6px' }}>【模拟扫码】二维码内容</div>
+                  {activeOrder.qrContent}
+                </div>
+
+                <div className="payment-meta">
+                  <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'white', marginBottom: '4px' }}>
+                    扫码支付: ¥{activeOrder.order.amount} 元
+                  </div>
+                  <div>请使用{payChannel === 'wechat' ? '微信' : '支付宝'}扫码完成支付</div>
+                  <div style={{ fontSize: '11px', color: 'var(--primary-pink)', marginTop: '4px' }}>
+                    {orderStatus === 'paid'
+                      ? '✅ 已检测到支付成功，正在到账...'
+                      : orderStatus === 'timeout'
+                        ? '⏱️ 查询超时，如已支付请点击下方按钮确认。'
+                        : '🔄 正在等待支付结果...'}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleConfirmRealPayment}
+                  disabled={isConfirmingPayment}
+                  className="btn-primary payment-status-sim"
+                  style={{
+                    padding: '10px',
+                    width: '100%',
+                    fontSize: '14px',
+                    background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
+                    boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
+                  }}
+                >
+                  {isConfirmingPayment ? '正在确认到账...' : '我已完成支付'}
+                </button>
+
+                <button
+                  onClick={stopScanFlow}
+                  disabled={isConfirmingPayment}
+                  className="btn-secondary"
+                  style={{ padding: '8px', width: '100%', fontSize: '12px', marginTop: '8px' }}
+                >
+                  取消扫码
+                </button>
+              </div>
+            )}
           </div>
         )}
 

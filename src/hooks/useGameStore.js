@@ -70,6 +70,12 @@ export function useGameStore() {
   const appendChatMessage = useCallback((message) => {
     setChatHistory((prev) => [...prev, message]);
   }, []);
+  // Re-trigger the canonical /api/user/sync effect so coins / balance / freshly
+  // persisted system messages all refresh through one code path (used after a
+  // real payment settles).
+  const refreshUserState = useCallback(() => {
+    setSyncAttempt((attempt) => attempt + 1);
+  }, []);
   const {
     relationshipSummary,
     relationshipHighlights,
@@ -98,6 +104,9 @@ export function useGameStore() {
     claimTaskReward,
     dailyCheckIn,
     tipXiaoxi,
+    createOrder,
+    queryOrder,
+    confirmPayment,
     retryLastFailedAction,
     resetFailureState,
   } = useGameActions({
@@ -118,6 +127,7 @@ export function useGameStore() {
     setHasCheckedInToday,
     setAvatarState,
     setRecentEvents,
+    refreshUserState,
   });
 
   useEffect(() => {
@@ -350,6 +360,23 @@ export function useGameStore() {
     }
   }, [userId, notify, isMounted]);
 
+  const clearMemories = useCallback(async () => {
+    if (!userId) return false;
+    try {
+      await postJson('/api/memory/clear', { userId });
+      if (!isMounted()) return false;
+      // The clear endpoint only returns a count; reflect the empty state locally.
+      setMemories([]);
+      setMemorySummary('');
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to clear memories', { error: err });
+      notify(err.message, 'error', '清空失败');
+      return false;
+    }
+  }, [userId, notify, isMounted]);
+
   // Fire-and-forget UI behavior beacon (best-effort analytics; never throws).
   const track = useCallback((type, payload = {}) => {
     if (!userId) return;
@@ -382,6 +409,9 @@ export function useGameStore() {
     claimTaskReward,
     dailyCheckIn,
     tipXiaoxi,
+    createOrder,
+    queryOrder,
+    confirmPayment,
     hasCheckedInToday,
     checkinStreak,
     loginStreak,
@@ -398,6 +428,7 @@ export function useGameStore() {
     isLoadingMemories,
     loadMemories,
     deleteMemory,
+    clearMemories,
     track,
     syncError,
     retrySync,

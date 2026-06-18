@@ -167,6 +167,9 @@ function App() {
         feedXiaoxi={store.feedXiaoxi}
         giftXiaoxi={store.giftXiaoxi}
         tipXiaoxi={store.tipXiaoxi}
+        createOrder={store.createOrder}
+        queryOrder={store.queryOrder}
+        confirmPayment={store.confirmPayment}
         activePurchaseKey={store.activePurchaseKey}
         isTipping={store.isTipping}
         lastFailedAction={store.lastFailedAction}
@@ -205,6 +208,7 @@ function App() {
         isLoadingMemories={store.isLoadingMemories}
         loadMemories={store.loadMemories}
         deleteMemory={store.deleteMemory}
+        clearMemories={store.clearMemories}
       />
 
       {/* Footer Branding */}

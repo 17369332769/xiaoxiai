@@ -1,3 +1,7 @@
+import * as React from 'react';
+
+void React;
+
 export default function MemoryModal({
   isOpen,
   onClose,
@@ -6,8 +10,24 @@ export default function MemoryModal({
   isLoadingMemories = false,
   loadMemories,
   deleteMemory,
+  clearMemories,
 }) {
   if (!isOpen) return null;
+
+  const hasMemories = memories.length > 0;
+
+  const handleClearAll = () => {
+    if (!hasMemories || !clearMemories) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      '确定要清空小希记住的全部内容吗？此操作不可恢复，小希将忘记关于你的所有记忆。'
+    );
+    if (confirmed) {
+      clearMemories();
+    }
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -40,15 +60,26 @@ export default function MemoryModal({
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
           <div className="section-title" style={{ fontSize: '13px', margin: 0 }}>🧠 记忆卡片</div>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={loadMemories}
-            disabled={isLoadingMemories}
-            style={{ padding: '4px 12px', fontSize: '12px' }}
-          >
-            {isLoadingMemories ? '刷新中...' : '刷新'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={loadMemories}
+              disabled={isLoadingMemories}
+              style={{ padding: '4px 12px', fontSize: '12px' }}
+            >
+              {isLoadingMemories ? '刷新中...' : '刷新'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleClearAll}
+              disabled={isLoadingMemories || !hasMemories}
+              style={{ padding: '4px 12px', fontSize: '12px' }}
+            >
+              清空全部
+            </button>
+          </div>
         </div>
 
         <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>

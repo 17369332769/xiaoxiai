@@ -947,4 +947,171 @@ describe('useGameStore', () => {
     expect(memoryUpdateMessages).toHaveLength(1);
     expect(result.current.relationshipRecentUpdates).toHaveLength(1);
   });
+
+  test('clearMemories wipes the local memory list and summary after a successful call', async () => {
+    let clearCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: 200,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+
+      if (input === '/api/memory/list') {
+        return mockJsonResponse({
+          ok: true,
+          summary: '小希记得你喜欢拿铁。',
+          memories: [
+            { key: 'favorite_drink', value: '拿铁', weight: 3, updatedAt: '10:00' },
+          ],
+        });
+      }
+
+      if (input === '/api/memory/clear') {
+        clearCalls += 1;
+        return mockJsonResponse({ ok: true, cleared: 1 });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.loadMemories();
+    });
+
+    await waitFor(() => {
+      expect(result.current.memories).toHaveLength(1);
+    });
+    expect(result.current.memorySummary).toBe('小希记得你喜欢拿铁。');
+
+    await act(async () => {
+      const success = await result.current.clearMemories();
+      expect(success).toBe(true);
+    });
+
+    expect(clearCalls).toBe(1);
+    expect(result.current.memories).toHaveLength(0);
+    expect(result.current.memorySummary).toBe('');
+  });
+
+  test('real payment flow: create order, poll query, then settle via gateway callback', async () => {
+    let syncCalls = 0;
+    let queryCalls = 0;
+    let createBody = null;
+    let callbackBody = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+
+      if (input === '/api/user/sync') {
+        syncCalls += 1;
+        // First sync seeds 200 coins; the post-payment re-sync reflects the top-up.
+        return mockJsonResponse({
+          ok: true,
+          user: {
+            level: 1,
+            affection: 10,
+            energy: 80,
+            mood: 70,
+            coins: syncCalls === 1 ? 200 : 1400,
+            hasCheckedInToday: false,
+          },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+
+      if (input === '/api/order/create') {
+        createBody = body;
+        return mockJsonResponse({
+          ok: true,
+          order: { id: 'order-1', outTradeNo: 'XX-1', amount: 52, coins: 1200, paymentMethod: 'wechat', status: 'pending' },
+          coins: 1200,
+          qrContent: 'xiaoxiai://pay?out_trade_no=XX-1&amount=52',
+          simulatedCallback: { out_trade_no: 'XX-1', total_amount: 52, gateway_txn_id: 'WX1', result: 'SUCCESS', sign: 'sig' },
+        });
+      }
+
+      if (input === '/api/order/query') {
+        queryCalls += 1;
+        // Pending on the first poll, paid on the second.
+        return mockJsonResponse({
+          ok: true,
+          order: { id: 'order-1', outTradeNo: 'XX-1', amount: 52, coins: 1200, paymentMethod: 'wechat', status: queryCalls === 1 ? 'pending' : 'paid' },
+        });
+      }
+
+      if (input === '/api/payment/callback') {
+        callbackBody = body;
+        return mockJsonResponse({
+          ok: true,
+          settled: true,
+          alreadyPaid: false,
+          status: 'paid',
+          coins: 1400,
+          order: { id: 'order-1', outTradeNo: 'XX-1', amount: 52, coins: 1200, paymentMethod: 'wechat', status: 'paid' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    await waitFor(() => {
+      expect(result.current.isSyncing).toBe(false);
+    });
+
+    // 1. Create the order.
+    let created;
+    await act(async () => {
+      created = await result.current.createOrder(52, 'wechat');
+    });
+    expect(createBody).toEqual({ userId: expect.any(String), amount: 52, paymentMethod: 'wechat' });
+    expect(created.order.id).toBe('order-1');
+    expect(created.qrContent).toContain('xiaoxiai://pay');
+
+    // 2. Poll until the backend reports the order paid.
+    let firstQuery;
+    await act(async () => {
+      firstQuery = await result.current.queryOrder({ orderId: 'order-1' });
+    });
+    expect(firstQuery.status).toBe('pending');
+
+    let secondQuery;
+    await act(async () => {
+      secondQuery = await result.current.queryOrder({ orderId: 'order-1' });
+    });
+    expect(secondQuery.status).toBe('paid');
+
+    // 3. Replay the gateway callback to settle, then the store re-syncs.
+    let confirmed;
+    await act(async () => {
+      confirmed = await result.current.confirmPayment(created.simulatedCallback);
+    });
+    expect(confirmed.settled).toBe(true);
+    expect(callbackBody).toEqual(created.simulatedCallback);
+
+    await waitFor(() => {
+      expect(result.current.coins).toBe(1400);
+    });
+    expect(syncCalls).toBeGreaterThanOrEqual(2);
+  });
 });

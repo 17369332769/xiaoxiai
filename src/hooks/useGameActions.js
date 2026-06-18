@@ -30,6 +30,7 @@ export function useGameActions({
   setHasCheckedInToday,
   setAvatarState,
   setRecentEvents,
+  refreshUserState,
 }) {
   const celebrationTimeoutRef = useRef(null);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -520,6 +521,86 @@ export function useGameActions({
     resetFailureState,
   ]);
 
+  // ---- Real payment order link (scan-to-pay closed loop) ----
+  // These thin wrappers expose the backend's true order endpoints so the UI can
+  // orchestrate a create -> poll -> gateway-callback flow that mirrors a real
+  // WeChat/Alipay scan payment. They return the parsed payload (or null on
+  // failure) and never throw, so the calling component can drive its own state
+  // machine without try/catch.
+  const createOrder = useCallback(async (amount, paymentMethod) => {
+    if (!userId || isSyncing) {
+      return null;
+    }
+
+    try {
+      const data = await postJson('/api/order/create', { userId, amount, paymentMethod });
+      if (!isMounted()) return null;
+      return data;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Order create failed', { error: err });
+      notify(err.message, 'error', '下单失败');
+      return null;
+    }
+  }, [userId, isSyncing, isMounted, notify]);
+
+  const queryOrder = useCallback(async (orderRef) => {
+    if (!userId || !orderRef) {
+      return null;
+    }
+
+    const payload = orderRef.orderId
+      ? { userId, orderId: orderRef.orderId }
+      : { userId, outTradeNo: orderRef.outTradeNo };
+
+    try {
+      const data = await postJson('/api/order/query', payload);
+      if (!isMounted()) return null;
+      return data.order || null;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Order query failed', { error: err });
+      return null;
+    }
+  }, [userId, isMounted]);
+
+  // Replays the (pre-signed) gateway callback to settle the order. The backend
+  // guarantees idempotency, so repeated confirmations are safe. On success we
+  // refresh the full user snapshot so coins / balance / the recharge system
+  // message all flow in through the canonical sync path.
+  const confirmPayment = useCallback(async (callbackPayload) => {
+    if (!callbackPayload) {
+      return null;
+    }
+
+    try {
+      const data = await postJson('/api/payment/callback', callbackPayload);
+      if (!isMounted()) return null;
+
+      if (data.settled || data.alreadyPaid) {
+        setCelebrationType('roses');
+        setShowCelebration(true);
+        scheduleCelebrationReset(4000);
+        setAvatarState('blush');
+        if (typeof refreshUserState === 'function') {
+          refreshUserState();
+        }
+      }
+      return data;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Payment callback failed', { error: err });
+      notify(err.message, 'error', '支付确认失败');
+      return null;
+    }
+  }, [
+    isMounted,
+    notify,
+    scheduleCelebrationReset,
+    setAvatarState,
+    refreshUserState,
+  ]);
+
   const retryLastFailedAction = useCallback(async () => {
     if (!lastFailedAction || isSyncing || Boolean(activePurchaseKey) || isTipping) {
       return false;
@@ -575,6 +656,9 @@ export function useGameActions({
     claimTaskReward,
     dailyCheckIn,
     tipXiaoxi,
+    createOrder,
+    queryOrder,
+    confirmPayment,
     retryLastFailedAction,
     resetFailureState,
   };

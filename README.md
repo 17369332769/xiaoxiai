@@ -62,7 +62,13 @@ npm install
 可以先参考示例文件：
 
 ```powershell
+# Windows PowerShell
 Copy-Item backend/.env.example backend/.env
+```
+
+```bash
+# Linux / macOS
+cp backend/.env.example backend/.env
 ```
 
 可用变量：
@@ -75,6 +81,8 @@ Copy-Item backend/.env.example backend/.env
 - `LOG_REQUESTS`：是否打印请求日志，默认 `true`
 - `XIAOXIAI_DB_PATH`：自定义 SQLite 文件路径
 - `EXTRA_BLOCKED_WORDS`：聊天内容安全过滤的额外屏蔽词（逗号分隔），追加到内置词表
+- `MEMORY_CAP`：每个用户长期记忆条数上限，默认 `20`；超出后按权重和时间淘汰
+- `MEMORY_TTL_DAYS`：长期记忆失效天数，默认 `0`（关闭）；>0 时清理超期且低权重（未被反复提及）的陈旧记忆
 - `PRESENCE_BASELINE`：在真实在线人数基础上叠加的展示基数，默认 `0`
 - `PAYMENT_SECRET`：支付回调签名密钥（HMAC），生产必须覆盖
 - `AUTH_SECRET`：账号登录令牌签名密钥（HMAC），生产必须覆盖
@@ -104,7 +112,7 @@ npm run dev
 
 默认启动在 `http://localhost:5173`
 
-前端通过 [vite.config.js](D:/project/xiaoxiai/vite.config.js) 将 `/api` 请求代理到 `http://localhost:3000`。
+前端通过 [vite.config.js](vite.config.js) 将 `/api` 请求代理到 `http://localhost:3000`。
 
 ## 常用命令
 
@@ -124,6 +132,17 @@ npm run verify
 npm run dev
 npm start
 ```
+
+## 部署（生产）
+
+生产环境分为静态前端与后端 API 两部分：
+
+1. 构建前端：`npm run build` 生成 `dist/`（含运营后台页 `admin.html`），由 Nginx 或任意静态服务器托管。
+2. 运行后端：`cd backend && npm start`，建议用 pm2 或 systemd 守护。后端只提供 `/api/*`，默认监听 `127.0.0.1:3000`。
+3. 用 Nginx 反向代理：静态托管 `dist/`，把 `/api` 代理到后端。`admin.html` 已随构建进入 `dist/`，作为静态文件提供即可。
+4. 生产必须覆盖的环境变量：`AUTH_SECRET`、`PAYMENT_SECRET`、`ADMIN_TOKEN`、`ALLOWED_ORIGIN`（指向前端真实域名）；`backend/.env` 不入库。
+
+完整的 pm2 / systemd / Nginx 配置示例与数据库备份建议见 [OPERATIONS.md](backend/OPERATIONS.md) 的「Production Deployment」章节。
 
 ## 主要接口
 
@@ -147,14 +166,14 @@ npm start
 - 成功：`{ ok: true, ...data }`
 - 失败：`{ ok: false, error: { code, message } }`
 
-详细接口说明见 [API.md](D:/project/xiaoxiai/backend/API.md)
-运维与安全说明见 [OPERATIONS.md](D:/project/xiaoxiai/backend/OPERATIONS.md)
+详细接口说明见 [API.md](backend/API.md)
+运维与安全说明见 [OPERATIONS.md](backend/OPERATIONS.md)
 
 ## 数据说明
 
 SQLite 文件位置：
 
-- [database.sqlite](D:/project/xiaoxiai/backend/database.sqlite)
+- [database.sqlite](backend/database.sqlite)
 
 当前表结构包括：
 
