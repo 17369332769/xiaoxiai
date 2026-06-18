@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useGameStore } from './hooks/useGameStore';
 import Header from './components/Header';
 import MainScreen from './components/MainScreen';
@@ -6,6 +6,8 @@ import ChatBox from './components/ChatBox';
 import ActionMenu from './components/ActionMenu';
 import ShopModal from './components/ShopModal';
 import CelebrateEffect from './components/CelebrateEffect';
+import NotificationCenter from './components/NotificationCenter';
+import SyncStatusBanner from './components/SyncStatusBanner';
 
 function App() {
   const store = useGameStore();
@@ -30,12 +32,16 @@ function App() {
 
   // Check if daily check-in task is completed
   const checkinTask = store.tasks.find(t => t.id === 'checkin');
-  const isCheckInCompleted = checkinTask ? checkinTask.completed : false;
+  const isCheckInCompleted = checkinTask ? (checkinTask.completed || store.hasCheckedInToday) : store.hasCheckedInToday;
 
   return (
     <div className="app-container">
       {/* Fullscreen Celebration Canvas (Roses/Hearts/Stars Shower) */}
       <CelebrateEffect active={store.showCelebration} type={store.celebrationType} />
+      <NotificationCenter
+        notifications={store.notifications}
+        dismissNotification={store.dismissNotification}
+      />
 
       {/* Top Header Section */}
       <Header
@@ -43,6 +49,14 @@ function App() {
         coins={store.coins}
         dailyCheckIn={store.dailyCheckIn}
         isCheckInCompleted={isCheckInCompleted}
+        isCheckInPending={store.isCheckingIn || store.isSyncing}
+        notify={store.notify}
+      />
+
+      <SyncStatusBanner
+        syncError={store.syncError}
+        isSyncing={store.isSyncing}
+        retrySync={store.retrySync}
       />
 
       {/* Real-time Ticker Bulletin Board */}
@@ -74,6 +88,10 @@ function App() {
           <ChatBox
             chatHistory={store.chatHistory}
             sendMessage={store.sendMessage}
+            lastFailedMessage={store.lastFailedMessage}
+            retryLastFailedMessage={store.retryLastFailedMessage}
+            isSendingMessage={store.isSendingMessage}
+            isInteractionLocked={store.isSyncing}
           />
 
           {/* Action Menu (Shop items & Tasks) */}
@@ -82,12 +100,15 @@ function App() {
             claimTaskReward={store.claimTaskReward}
             openShop={openShop}
             openTipping={openTipping}
+            isInteractionLocked={store.isSyncing}
+            claimingTaskIds={store.claimingTaskIds}
           />
         </div>
       </main>
 
       {/* Shop / Tipping Shared Popup Dialog */}
       <ShopModal
+        key={`${modalMode}-${shopType}-${isModalOpen ? 'open' : 'closed'}`}
         isOpen={isModalOpen}
         mode={modalMode}
         shopType={shopType}
@@ -99,6 +120,11 @@ function App() {
         feedXiaoxi={store.feedXiaoxi}
         giftXiaoxi={store.giftXiaoxi}
         tipXiaoxi={store.tipXiaoxi}
+        activePurchaseKey={store.activePurchaseKey}
+        isTipping={store.isTipping}
+        lastFailedAction={store.lastFailedAction}
+        retryLastFailedAction={store.retryLastFailedAction}
+        notify={store.notify}
       />
 
       {/* Footer Branding */}

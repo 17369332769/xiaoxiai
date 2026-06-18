@@ -1,28 +1,39 @@
-import { useState, useEffect, useCallback } from 'react';
-
-const FOOD_ITEMS = [
-  { id: 'coffee', name: '香浓拿铁 (Latte)', cost: 30, energy: 15, affection: 5, icon: '☕', desc: '暖暖的咖啡，给小希提神。' },
-  { id: 'cake', name: '红丝绒蛋糕 (Cake)', cost: 60, energy: 30, affection: 15, icon: '🍰', desc: '甜甜的蛋糕，小希的心最爱。' },
-  { id: 'bento', name: '爱心便当 (Bento)', cost: 100, energy: 60, affection: 25, icon: '🍱', desc: '营养均衡的便当，小希吃饱饱。' },
-];
-
-const GIFT_ITEMS = [
-  { id: 'rose', name: '水晶玫瑰 (Crystal Rose)', cost: 120, mood: 20, affection: 35, icon: '🌹', desc: '象征纯洁爱情的玫瑰花。' },
-  { id: 'necklace', name: '流星项链 (Star Necklace)', cost: 250, mood: 40, affection: 70, icon: '💖', desc: '精致的星形项链，戴在小希颈间。' },
-  { id: 'ring', name: '真爱誓约戒指 (Promise Ring)', cost: 999, mood: 100, affection: 500, icon: '💍', desc: '真爱誓约，解锁终生女友羁绊！' },
-];
-
-const TIPPING_TIERS = [
-  { amount: 5, label: '一杯奶茶 (Milk Tea)', coins: 100, desc: '支持小希买杯奶茶' },
-  { amount: 52, label: '一束花海 (Flower Bouquet)', coins: 1200, desc: '对小希表达爱意 (520)' },
-  { amount: 131.4, label: '浪漫城堡 (Romantic Castle)', coins: 3344, desc: '一生一世的守护 (1314)' },
-];
-
-const SIMULATED_NAMES = ['萌萌哒小野猫', '星空下的漫步者', '夏日微风', '代码搬运工', '爱希一万年', '云端男友', '泡泡糖', '橘子汽水', '青衫折扇', '微光'];
-const SIMULATED_GIFTS = ['香浓拿铁 ☕', '红丝绒蛋糕 🍰', '水晶玫瑰 🌹', '流星项链 💖', '爱心便当 🍱', '真爱誓约戒指 💍'];
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import {
+  FOOD_ITEMS,
+  GIFT_ITEMS,
+  TIPPING_TIERS,
+} from '../../shared/gameConfig.js';
+import { useNotifications } from './useNotifications.js';
+import { useTrackedAsync } from './useTrackedAsync.js';
+import { isAbortError, parseApiResponse } from '../utils/apiClient.js';
+import { createClientLogger } from '../utils/clientLogger.js';
+import {
+  appendServerMessages,
+  applyUserSnapshot,
+  buildChatFailureMessage,
+  buildSyncFailureMessage,
+  createSimulatedRecentEvent,
+  createTimestampedMessage,
+  getOrCreateUserId,
+  replaceTemporaryChatMessage,
+  trimRecentEvents,
+} from '../utils/gameStoreHelpers.js';
+const logger = createClientLogger('game-store');
 
 export function useGameStore() {
-  const [userId, setUserId] = useState('');
+  const avatarResetTimeoutRef = useRef(null);
+  const celebrationTimeoutRef = useRef(null);
+  const { notifications, notify, dismissNotification } = useNotifications();
+  const {
+    isMounted,
+    setStateIfMounted,
+    createTrackedRequestController,
+    releaseTrackedRequestController,
+  } = useTrackedAsync();
+  const [userId] = useState(() => {
+    return getOrCreateUserId();
+  });
   const [level, setLevel] = useState(1);
   const [affection, setAffection] = useState(10);
   const [energy, setEnergy] = useState(80);
@@ -38,15 +49,98 @@ export function useGameStore() {
   ]);
   const [showCelebration, setShowCelebration] = useState(false);
   const [celebrationType, setCelebrationType] = useState('hearts'); // hearts, roses, stars
+  const [hasCheckedInToday, setHasCheckedInToday] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [isSyncing, setIsSyncing] = useState(true);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [isTipping, setIsTipping] = useState(false);
+  const [activePurchaseKey, setActivePurchaseKey] = useState(null);
+  const [claimingTaskIds, setClaimingTaskIds] = useState([]);
+  const [lastFailedMessage, setLastFailedMessage] = useState('');
+  const [lastFailedAction, setLastFailedAction] = useState(null);
+  const isSendingMessageRef = useRef(false);
+  const isCheckingInRef = useRef(false);
+  const isTippingRef = useRef(false);
+  const activePurchaseKeyRef = useRef(null);
+  const claimingTaskIdsRef = useRef(new Set());
+  const [syncAttempt, setSyncAttempt] = useState(0);
+  const userStateSetters = useMemo(() => ({
+    setLevel,
+    setAffection,
+    setEnergy,
+    setMood,
+    setCoins,
+  }), [setLevel, setAffection, setEnergy, setMood, setCoins]);
 
-  // Get or create unique anonymous User ID
-  useEffect(() => {
-    let id = localStorage.getItem('xxa_user_id');
-    if (!id) {
-      id = 'user_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString().slice(-4);
-      localStorage.setItem('xxa_user_id', id);
+  const beginBooleanPending = useCallback((pendingRef, setPending) => {
+    if (!isMounted() || pendingRef.current) {
+      return false;
     }
-    setUserId(id);
+
+    pendingRef.current = true;
+    setStateIfMounted(setPending, true);
+    return true;
+  }, [isMounted, setStateIfMounted]);
+
+  const endBooleanPending = useCallback((pendingRef, setPending) => {
+    pendingRef.current = false;
+    setStateIfMounted(setPending, false);
+  }, [setStateIfMounted]);
+
+  const beginPurchase = useCallback((purchaseKey) => {
+    if (!isMounted() || activePurchaseKeyRef.current) {
+      return false;
+    }
+
+    activePurchaseKeyRef.current = purchaseKey;
+    setStateIfMounted(setActivePurchaseKey, purchaseKey);
+    return true;
+  }, [isMounted, setStateIfMounted]);
+
+  const endPurchase = useCallback(() => {
+    activePurchaseKeyRef.current = null;
+    setStateIfMounted(setActivePurchaseKey, null);
+  }, [setStateIfMounted]);
+
+  const beginTaskClaim = useCallback((taskId) => {
+    if (!isMounted() || claimingTaskIdsRef.current.has(taskId)) {
+      return false;
+    }
+
+    claimingTaskIdsRef.current.add(taskId);
+    setStateIfMounted(setClaimingTaskIds, Array.from(claimingTaskIdsRef.current));
+    return true;
+  }, [isMounted, setStateIfMounted]);
+
+  const endTaskClaim = useCallback((taskId) => {
+    claimingTaskIdsRef.current.delete(taskId);
+    setStateIfMounted(setClaimingTaskIds, Array.from(claimingTaskIdsRef.current));
+  }, [setStateIfMounted]);
+
+  const scheduleCelebrationReset = useCallback((delayMs) => {
+    if (celebrationTimeoutRef.current) {
+      clearTimeout(celebrationTimeoutRef.current);
+    }
+
+    celebrationTimeoutRef.current = setTimeout(() => {
+      celebrationTimeoutRef.current = null;
+      setStateIfMounted(setShowCelebration, false);
+    }, delayMs);
+  }, [setStateIfMounted]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarResetTimeoutRef.current) {
+        clearTimeout(avatarResetTimeoutRef.current);
+        avatarResetTimeoutRef.current = null;
+      }
+
+      if (celebrationTimeoutRef.current) {
+        clearTimeout(celebrationTimeoutRef.current);
+        celebrationTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   // Sync user state from backend Express endpoints on mount or userId set
@@ -54,41 +148,53 @@ export function useGameStore() {
     if (!userId) return;
 
     const syncUser = async () => {
+      setStateIfMounted(setIsSyncing, true);
+      setStateIfMounted(setSyncError, '');
+      const controller = createTrackedRequestController();
+
       try {
         const response = await fetch('/api/user/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({ userId }),
         });
-        const data = await response.json();
-        
-        if (data.error) {
-          console.error('API Sync Error:', data.error);
+        const data = await parseApiResponse(response);
+        if (controller.signal.aborted || !isMounted()) {
           return;
         }
 
-        setLevel(data.user.level);
-        setAffection(data.user.affection);
-        setEnergy(data.user.energy);
-        setMood(data.user.mood);
-        setCoins(data.user.coins);
+        applyUserSnapshot(data.user, userStateSetters);
         setChatHistory(data.chatHistory);
         setTasks(data.tasks);
+        setHasCheckedInToday(Boolean(data.user.hasCheckedInToday));
+        setStateIfMounted(setLastFailedMessage, '');
+        setStateIfMounted(setLastFailedAction, null);
       } catch (err) {
-        console.error('Failed to sync user stats with backend. Is backend server running?', err);
-        setChatHistory([
-          {
-            id: `sys-sync-err-${Date.now()}`,
-            sender: 'system',
-            text: '⚠️ 无法连接至后端数据库服务，请确认后端项目已启动 (node server.js)。本地数据暂时无法加载！',
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          }
-        ]);
+        if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+          return;
+        }
+
+        logger.error('Failed to sync user stats with backend', { error: err });
+        notify('暂时连不上后端服务，请确认后端已经启动。', 'error', '连接失败');
+        setStateIfMounted(setSyncError, '当前无法连接到后端服务。请确认后端已启动，然后点击“重新连接”。');
+        setChatHistory([buildSyncFailureMessage()]);
+      } finally {
+        releaseTrackedRequestController(controller);
+        setStateIfMounted(setIsSyncing, false);
       }
     };
 
     syncUser();
-  }, [userId]);
+  }, [userId, notify, createTrackedRequestController, releaseTrackedRequestController, setStateIfMounted, isMounted, userStateSetters, syncAttempt]);
+
+  const retrySync = useCallback(() => {
+    if (isSyncing) {
+      return;
+    }
+
+    setSyncAttempt((attempt) => attempt + 1);
+  }, [isSyncing]);
 
   // Handle Online Count fluctuation (local visual sugar)
   useEffect(() => {
@@ -104,308 +210,324 @@ export function useGameStore() {
   // Simulated ticker events (local visual sugar)
   useEffect(() => {
     const timer = setInterval(() => {
-      const name = SIMULATED_NAMES[Math.floor(Math.random() * SIMULATED_NAMES.length)];
-      const gift = SIMULATED_GIFTS[Math.floor(Math.random() * SIMULATED_GIFTS.length)];
-      const isTip = Math.random() > 0.6;
-      
-      let eventText = '';
-      if (isTip) {
-        const amounts = [5, 52, 131.4];
-        const amt = amounts[Math.floor(Math.random() * amounts.length)];
-        eventText = `玩家「${name}」刚刚打赏了小希 ¥${amt} 元！小希比心感谢~ 💖`;
-      } else {
-        eventText = `玩家「${name}」刚刚在商店买下了 [${gift}] 送给小希！`;
-      }
-
-      setRecentEvents(prev => {
-        const updated = [eventText, ...prev];
-        return updated.slice(0, 10);
-      });
+      const eventText = createSimulatedRecentEvent();
+      setRecentEvents((prev) => trimRecentEvents(prev, eventText));
     }, 12000);
     return () => clearInterval(timer);
   }, []);
 
   // Reset Avatar State back to normal after happy or blush
   useEffect(() => {
-    if (avatarState !== 'normal') {
-      const timer = setTimeout(() => {
-        setAvatarState('normal');
-      }, 5000);
-      return () => clearTimeout(timer);
+    if (avatarResetTimeoutRef.current) {
+      clearTimeout(avatarResetTimeoutRef.current);
+      avatarResetTimeoutRef.current = null;
     }
-  }, [avatarState]);
+
+    if (avatarState !== 'normal') {
+      avatarResetTimeoutRef.current = setTimeout(() => {
+        avatarResetTimeoutRef.current = null;
+        setStateIfMounted(setAvatarState, 'normal');
+      }, 5000);
+
+      return () => {
+        if (avatarResetTimeoutRef.current) {
+          clearTimeout(avatarResetTimeoutRef.current);
+          avatarResetTimeoutRef.current = null;
+        }
+      };
+    }
+  }, [avatarState, setStateIfMounted]);
 
   // Send message action to backend
   const sendMessage = useCallback(async (text) => {
-    if (!text.trim() || !userId) return;
+    if (!text.trim() || !userId || isSyncing) return false;
+    if (!beginBooleanPending(isSendingMessageRef, setIsSendingMessage)) return false;
+
+    const tempId = `user-temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     // 1. Optimistic UI update: append user message immediately
     const userMsg = {
-      id: `user-temp-${Date.now()}`,
-      sender: 'user',
-      text: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      ...createTimestampedMessage(tempId, 'user', text),
     };
     setChatHistory(prev => [...prev, userMsg]);
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ userId, text }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert('小希暂时开小差啦：' + data.error);
-        return;
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
+        return false;
       }
 
       // 2. Append real AI response & system updates returned from server
-      setChatHistory(prev => {
-        // Remove the temp user message if we want precise DB timestamps, or just filter out temp IDs
-        const cleaned = prev.filter(m => !m.id.startsWith('user-temp'));
-        const updated = [
-          ...cleaned,
-          {
-            id: `user-${Date.now()}`,
-            sender: 'user',
-            text: text,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          },
-          data.aiMessage
-        ];
-        if (data.systemMessage) {
-          updated.push(data.systemMessage);
-        }
-        return updated;
-      });
+      setChatHistory((prev) => replaceTemporaryChatMessage(prev, tempId, data.aiMessage, data.systemMessages));
 
       // 3. Update character stats & tasks
-      setLevel(data.user.level);
-      setAffection(data.user.affection);
-      setEnergy(data.user.energy);
-      setMood(data.user.mood);
-      setCoins(data.user.coins);
+      applyUserSnapshot(data.user, userStateSetters);
       setTasks(data.tasks);
+      setStateIfMounted(setLastFailedMessage, '');
 
       // Set avatar reaction
       setAvatarState(data.aiMessage.avatarState);
+      return true;
 
     } catch (err) {
-      console.error('Chat error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Chat request failed', { error: err });
+      notify(err.message, 'error', '发送失败');
+      setStateIfMounted(setLastFailedMessage, text);
       // Fallback notification in logs if backend fails completely
-      setChatHistory(prev => [
-        ...prev,
-        {
-          id: `sys-err-${Date.now()}`,
-          sender: 'system',
-          text: '⚠️ 连接后端服务器失败，请确认后端已启动。',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
+      setChatHistory((prev) => [...prev.filter((msg) => msg.id !== tempId), buildChatFailureMessage()]);
+      return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endBooleanPending(isSendingMessageRef, setIsSendingMessage);
     }
-  }, [userId]);
+  }, [userId, notify, isSyncing, beginBooleanPending, endBooleanPending, createTrackedRequestController, releaseTrackedRequestController, isMounted, userStateSetters, setStateIfMounted]);
+
+  const retryLastFailedMessage = useCallback(async () => {
+    if (!lastFailedMessage || isSendingMessage || isSyncing) {
+      return false;
+    }
+
+    return sendMessage(lastFailedMessage);
+  }, [lastFailedMessage, isSendingMessage, isSyncing, sendMessage]);
 
   // Feed action to backend
   const feedXiaoxi = useCallback(async (foodId) => {
     const food = FOOD_ITEMS.find(f => f.id === foodId);
-    if (!food || !userId) return false;
+    if (!food || !userId || isSyncing) return false;
 
     if (coins < food.cost) {
-      alert('爱心币不足哦！快去完成任务，或者打赏小希换取币吧~');
+      notify('爱心币不足哦，先去完成任务或者打赏补充一下吧。', 'warning', '余额不足');
       return false;
     }
+
+    const purchaseKey = `food:${foodId}`;
+    if (!beginPurchase(purchaseKey)) return false;
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/action/feed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           userId,
-          foodId,
-          cost: food.cost,
-          energy: food.energy,
-          affection: food.affection,
-          name: food.name,
-          icon: food.icon
+          foodId
         }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert(data.error);
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
         return false;
       }
 
       // Append chat log from server
-      setChatHistory(prev => {
-        const updated = [...prev, data.sysMsg, data.aiMsg];
-        if (data.systemLevelMsg) {
-          updated.push(data.systemLevelMsg);
-        }
-        return updated;
-      });
+      setChatHistory((prev) => appendServerMessages(prev, [data.sysMsg, data.aiMsg], data.systemMessages));
 
       // Update states
-      setLevel(data.user.level);
-      setAffection(data.user.affection);
-      setEnergy(data.user.energy);
-      setMood(data.user.mood);
-      setCoins(data.user.coins);
+      applyUserSnapshot(data.user, userStateSetters);
       setTasks(data.tasks);
+      setStateIfMounted(setLastFailedAction, null);
       setAvatarState('happy');
       return true;
 
     } catch (err) {
-      console.error('Feed error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Feed request failed', { error: err });
+      notify(err.message, 'error', '喂食失败');
+      setStateIfMounted(setLastFailedAction, {
+        kind: 'food',
+        itemId: foodId,
+        label: food.name,
+      });
       return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endPurchase();
     }
-  }, [userId, coins]);
+  }, [userId, coins, notify, isSyncing, beginPurchase, endPurchase, createTrackedRequestController, releaseTrackedRequestController, isMounted, userStateSetters, setStateIfMounted]);
 
   // Gift action to backend
   const giftXiaoxi = useCallback(async (giftId) => {
     const gift = GIFT_ITEMS.find(g => g.id === giftId);
-    if (!gift || !userId) return false;
+    if (!gift || !userId || isSyncing) return false;
 
     if (coins < gift.cost) {
-      alert('爱心币不足哦！');
+      notify('爱心币不足哦，先去赚一点再来送礼吧。', 'warning', '余额不足');
       return false;
     }
+
+    const purchaseKey = `gift:${giftId}`;
+    if (!beginPurchase(purchaseKey)) return false;
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/action/gift', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           userId,
-          giftId,
-          cost: gift.cost,
-          mood: gift.mood,
-          affection: gift.affection,
-          name: gift.name,
-          icon: gift.icon
+          giftId
         }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert(data.error);
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
         return false;
       }
 
       // Append chat logs
-      setChatHistory(prev => {
-        const updated = [...prev, data.sysMsg, data.aiMsg];
-        if (data.systemLevelMsg) {
-          updated.push(data.systemLevelMsg);
-        }
-        return updated;
-      });
+      setChatHistory((prev) => appendServerMessages(prev, [data.sysMsg, data.aiMsg], data.systemMessages));
 
       // Trigger animation celebration
       setCelebrationType(giftId === 'ring' ? 'roses' : 'stars');
       setShowCelebration(true);
-      setTimeout(() => setShowCelebration(false), 3000);
+      scheduleCelebrationReset(3000);
 
       // Update stats
-      setLevel(data.user.level);
-      setAffection(data.user.affection);
-      setEnergy(data.user.energy);
-      setMood(data.user.mood);
-      setCoins(data.user.coins);
+      applyUserSnapshot(data.user, userStateSetters);
       setTasks(data.tasks);
+      setStateIfMounted(setLastFailedAction, null);
       setAvatarState(giftId === 'ring' ? 'blush' : 'happy');
       return true;
 
     } catch (err) {
-      console.error('Gift error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Gift request failed', { error: err });
+      notify(err.message, 'error', '送礼失败');
+      setStateIfMounted(setLastFailedAction, {
+        kind: 'gift',
+        itemId: giftId,
+        label: gift.name,
+      });
       return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endPurchase();
     }
-  }, [userId, coins]);
+  }, [userId, coins, notify, isSyncing, beginPurchase, endPurchase, createTrackedRequestController, releaseTrackedRequestController, scheduleCelebrationReset, isMounted, userStateSetters, setStateIfMounted]);
 
   // Daily task claim reward to backend
   const claimTaskReward = useCallback(async (taskId) => {
-    if (!userId || !taskId) return;
+    if (!userId || !taskId || isSyncing) return false;
+    if (!beginTaskClaim(taskId)) return false;
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/task/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ userId, taskId }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert(data.error);
-        return;
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
+        return false;
       }
 
       setChatHistory(prev => [...prev, data.sysMsg]);
       setCoins(data.user.coins);
       setTasks(data.tasks);
+      return true;
 
     } catch (err) {
-      console.error('Claim task error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Task reward claim failed', { error: err });
+      notify(err.message, 'error', '领奖失败');
+      return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endTaskClaim(taskId);
     }
-  }, [userId]);
+  }, [userId, notify, isSyncing, beginTaskClaim, endTaskClaim, createTrackedRequestController, releaseTrackedRequestController, isMounted]);
 
   // Daily check-in action to backend
   const dailyCheckIn = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || isSyncing || hasCheckedInToday) return false;
+    if (!beginBooleanPending(isCheckingInRef, setIsCheckingIn)) return false;
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ userId }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert('今天已经签过到啦！每天记得来见我哦~');
-        return;
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
+        return false;
       }
 
       setChatHistory(prev => [...prev, data.aiMsg]);
       setTasks(data.tasks);
+      setHasCheckedInToday(true);
       setAvatarState('happy');
+      return true;
 
     } catch (err) {
-      console.error('Checkin error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Check-in request failed', { error: err });
+      if (err.code === 'ALREADY_CHECKED_IN') {
+        notify('今天已经签过到啦，明天记得早点来见我哦。', 'info', '已完成签到');
+        return false;
+      }
+      notify(err.message, 'error', '签到失败');
+      return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endBooleanPending(isCheckingInRef, setIsCheckingIn);
     }
-  }, [userId]);
+  }, [userId, notify, isSyncing, hasCheckedInToday, beginBooleanPending, endBooleanPending, createTrackedRequestController, releaseTrackedRequestController, isMounted]);
 
   // Tip real money (simulated) to backend
   const tipXiaoxi = useCallback(async (amount, paymentMethod) => {
-    if (!userId) return;
-
-    const tier = TIPPING_TIERS.find(t => t.amount === amount) || { coins: amount * 25, label: `打赏红包` };
+    if (!userId || isSyncing) return false;
+    if (!beginBooleanPending(isTippingRef, setIsTipping)) return false;
+    const controller = createTrackedRequestController();
 
     try {
       const response = await fetch('/api/action/tip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           userId,
           amount,
-          paymentMethod,
-          coinsGranted: tier.coins,
-          label: tier.label
+          paymentMethod
         }),
       });
-      const data = await response.json();
-
-      if (data.error) {
-        alert(data.error);
-        return;
+      const data = await parseApiResponse(response);
+      if (controller.signal.aborted || !isMounted()) {
+        return false;
       }
 
       // Add chat message
       setChatHistory(prev => {
         const updated = [...prev, data.sysMsg, data.aiMsg];
-        if (data.systemLevelMsg) {
-          updated.push(data.systemLevelMsg);
+        if (data.systemMessages?.length) {
+          updated.push(...data.systemMessages);
         }
         return updated;
       });
@@ -413,25 +535,58 @@ export function useGameStore() {
       // Trigger full screen rose petal shower
       setCelebrationType('roses');
       setShowCelebration(true);
-      setTimeout(() => setShowCelebration(false), 4000);
+      scheduleCelebrationReset(4000);
 
       // Broadcast marquee bulletin (local sync)
       const newBulletin = `公告：感谢亲爱的打赏 ¥${amount} 元！小希感动得要哭了，赠送了小希大量的爱心币！✨`;
-      setRecentEvents(prev => [newBulletin, ...prev]);
+      setRecentEvents((prev) => [newBulletin, ...prev]);
 
       // Update states
-      setLevel(data.user.level);
-      setAffection(data.user.affection);
-      setEnergy(data.user.energy);
-      setMood(data.user.mood);
-      setCoins(data.user.coins);
+      applyUserSnapshot(data.user, userStateSetters);
       setTasks(data.tasks);
+      setStateIfMounted(setLastFailedAction, null);
       setAvatarState('blush');
+      return true;
 
     } catch (err) {
-      console.error('Tipping error:', err);
+      if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+        return false;
+      }
+
+      logger.error('Tipping request failed', { error: err });
+      notify(err.message, 'error', '打赏失败');
+      setStateIfMounted(setLastFailedAction, {
+        kind: 'tip',
+        amount,
+        paymentMethod,
+        label: `¥${amount} / ${paymentMethod === 'wechat' ? '微信支付' : '支付宝'}`,
+      });
+      return false;
+    } finally {
+      releaseTrackedRequestController(controller);
+      endBooleanPending(isTippingRef, setIsTipping);
     }
-  }, [userId]);
+  }, [userId, notify, isSyncing, beginBooleanPending, endBooleanPending, createTrackedRequestController, releaseTrackedRequestController, scheduleCelebrationReset, isMounted, userStateSetters, setStateIfMounted]);
+
+  const retryLastFailedAction = useCallback(async () => {
+    if (!lastFailedAction || isSyncing || Boolean(activePurchaseKey) || isTipping) {
+      return false;
+    }
+
+    if (lastFailedAction.kind === 'food') {
+      return feedXiaoxi(lastFailedAction.itemId);
+    }
+
+    if (lastFailedAction.kind === 'gift') {
+      return giftXiaoxi(lastFailedAction.itemId);
+    }
+
+    if (lastFailedAction.kind === 'tip') {
+      return tipXiaoxi(lastFailedAction.amount, lastFailedAction.paymentMethod);
+    }
+
+    return false;
+  }, [lastFailedAction, isSyncing, activePurchaseKey, isTipping, feedXiaoxi, giftXiaoxi, tipXiaoxi]);
 
   return {
     level,
@@ -454,6 +609,22 @@ export function useGameStore() {
     giftXiaoxi,
     claimTaskReward,
     dailyCheckIn,
-    tipXiaoxi
+    tipXiaoxi,
+    hasCheckedInToday,
+    syncError,
+    retrySync,
+    lastFailedMessage,
+    retryLastFailedMessage,
+    lastFailedAction,
+    retryLastFailedAction,
+    isSyncing,
+    isSendingMessage,
+    isCheckingIn,
+    isTipping,
+    activePurchaseKey,
+    claimingTaskIds,
+    notifications,
+    notify,
+    dismissNotification
   };
 }

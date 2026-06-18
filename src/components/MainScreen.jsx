@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import xiaoxiNormal from '../assets/xiaoxi_normal.png';
-import xiaoxiHappy from '../assets/xiaoxi_happy.png';
-import xiaoxiBlush from '../assets/xiaoxi_blush.png';
+import { useState } from 'react';
+import xiaoxiNormal from '../assets/xiaoxi_normal.jpg';
+import xiaoxiHappy from '../assets/xiaoxi_happy.jpg';
+import xiaoxiBlush from '../assets/xiaoxi_blush.jpg';
 
 export default function MainScreen({ level, affection, energy, mood, avatarState }) {
   const [clickHearts, setClickHearts] = useState([]);
@@ -132,5 +132,3 @@ export default function MainScreen({ level, affection, energy, mood, avatarState
     </div>
   );
 }
-
-

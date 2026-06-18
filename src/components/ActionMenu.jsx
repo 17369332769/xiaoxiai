@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 export default function ActionMenu({
   tasks,
   claimTaskReward,
   openShop,
-  openTipping
+  openTipping,
+  isInteractionLocked = false,
+  claimingTaskIds = []
 }) {
   const [showTasks, setShowTasks] = useState(false);
 
@@ -34,25 +36,25 @@ export default function ActionMenu({
         
         <div className="action-buttons">
           {/* Feed Shop Button */}
-          <button onClick={() => openShop('food')} className="btn-secondary action-btn">
+          <button onClick={() => openShop('food')} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🍔</span>
             <span>喂食商店</span>
           </button>
 
           {/* Gift Shop Button */}
-          <button onClick={() => openShop('gift')} className="btn-secondary action-btn">
+          <button onClick={() => openShop('gift')} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🎁</span>
             <span>送礼商店</span>
           </button>
 
           {/* Tipping / Donation Button */}
-          <button onClick={openTipping} className="btn-primary action-btn">
+          <button onClick={openTipping} className="btn-primary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon" style={{ textShadow: 'none' }}>💝</span>
             <span>在线打赏</span>
           </button>
 
           {/* Task List Toggle Button */}
-          <button onClick={() => setShowTasks(!showTasks)} className={`btn-secondary action-btn ${showTasks ? 'active' : ''}`} style={{
+          <button onClick={() => setShowTasks(!showTasks)} className={`btn-secondary action-btn ${showTasks ? 'active' : ''}`} disabled={isInteractionLocked} style={{
             borderColor: showTasks ? 'var(--primary-pink)' : '',
             color: showTasks ? 'var(--text-pink)' : ''
           }}>
@@ -72,6 +74,7 @@ export default function ActionMenu({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {tasks.map(task => {
               const percent = Math.min(100, (task.progress / task.target) * 100);
+              const isClaiming = claimingTaskIds.includes(task.id);
               
               return (
                 <div key={task.id} className="task-item">
@@ -110,13 +113,13 @@ export default function ActionMenu({
                     {task.claimed ? (
                       <button disabled className="task-btn">已领完</button>
                     ) : task.completed ? (
-                      <button onClick={() => claimTaskReward(task.id)} className="task-btn" style={{
+                      <button onClick={() => claimTaskReward(task.id)} disabled={isClaiming || isInteractionLocked} className="task-btn" style={{
                         background: 'linear-gradient(135deg, #4ade80 0%, #22c55e 100%)',
                         color: 'white',
                         borderColor: '#22c55e',
                         animation: 'breathe 2s infinite'
                       }}>
-                        领奖励
+                        {isClaiming ? '领奖中...' : '领奖励'}
                       </button>
                     ) : (
                       <button disabled className="task-btn" style={{ opacity: 0.6 }}>未达成</button>

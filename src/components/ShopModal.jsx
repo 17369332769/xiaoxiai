@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import * as React from 'react';
+
+const { useState } = React;
 
 export default function ShopModal({
   isOpen,
@@ -11,39 +13,78 @@ export default function ShopModal({
   TIPPING_TIERS,
   feedXiaoxi,
   giftXiaoxi,
-  tipXiaoxi
+  tipXiaoxi,
+  activePurchaseKey,
+  isTipping = false,
+  lastFailedAction,
+  retryLastFailedAction,
+  notify
 }) {
   const [activeTab, setActiveTab] = useState(shopType || 'food');
   const [selectedTip, setSelectedTip] = useState(TIPPING_TIERS[0]);
   const [payChannel, setPayChannel] = useState('wechat'); // 'wechat' or 'alipay'
   const [isProcessing, setIsProcessing] = useState(false);
+  const isModalBusy = isProcessing || Boolean(activePurchaseKey) || isTipping;
+  const currentItems = activeTab === 'food' ? FOOD_ITEMS : GIFT_ITEMS;
 
   if (!isOpen) return null;
 
   // Handle purchasing food/gift items
-  const handlePurchase = (item, type) => {
+  const handlePurchase = async (item, type) => {
+    if (isModalBusy) {
+      return;
+    }
+
     if (coins < item.cost) {
-      alert('你的爱心币不足，快去和小希对话做任务，或者打赏小希获得爱心币吧！');
+      notify?.('爱心币不足，先去聊天做任务，或者打赏补充一下吧。', 'warning', '余额不足');
       return;
     }
     
     if (type === 'food') {
-      const success = feedXiaoxi(item.id);
+      const success = await feedXiaoxi(item.id);
       if (success) onClose();
     } else {
-      const success = giftXiaoxi(item.id);
+      const success = await giftXiaoxi(item.id);
       if (success) onClose();
     }
   };
 
   // Handle mock payment action
   const handleMockPay = () => {
+    if (isModalBusy) {
+      return;
+    }
+
     setIsProcessing(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsProcessing(false);
-      tipXiaoxi(selectedTip.amount, payChannel);
-      onClose();
+      const success = await tipXiaoxi(selectedTip.amount, payChannel);
+      if (success) {
+        onClose();
+      }
     }, 1500); // Simulated delay
+  };
+
+  const handleRequestClose = () => {
+    if (!isModalBusy) {
+      onClose();
+    }
+  };
+
+  const renderPurchaseButton = (item, type) => {
+    const purchaseKey = `${type}:${item.id}`;
+    const isCurrentPurchase = activePurchaseKey === purchaseKey;
+
+    return (
+      <button
+        onClick={() => handlePurchase(item, type)}
+        disabled={isModalBusy}
+        className="btn-primary"
+        style={{ padding: '6px 16px', fontSize: '13px', width: '100%' }}
+      >
+        {isCurrentPurchase ? '购买中...' : <><span className="coin-icon"></span> {item.cost} 购买</>}
+      </button>
+    );
   };
 
   // Mock QR Code SVG Generator for WeChat/Alipay
@@ -71,7 +112,7 @@ export default function ShopModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleRequestClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         
         {/* Modal Header */}
@@ -83,16 +124,34 @@ export default function ShopModal({
               <><span>💝</span><span>在线打赏小希 (Support Xiaoxi)</span></>
             )}
           </div>
-          <button className="close-btn" onClick={onClose}>&times;</button>
+          <button className="close-btn" onClick={handleRequestClose} disabled={isModalBusy}>&times;</button>
         </div>
 
         {/* SHOP MODE */}
         {mode === 'shop' && (
           <div>
+            {lastFailedAction && (lastFailedAction.kind === 'food' || lastFailedAction.kind === 'gift') && (
+              <div className="shop-retry-banner">
+                <div className="shop-retry-copy">
+                  <div className="shop-retry-label">上一次购买失败</div>
+                  <div className="shop-retry-preview">{lastFailedAction.label}</div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary shop-retry-action"
+                  onClick={retryLastFailedAction}
+                  disabled={isModalBusy}
+                >
+                  {isModalBusy ? '重试中...' : '重试购买'}
+                </button>
+              </div>
+            )}
+
             {/* Shop Category Tabs */}
             <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
               <button
                 onClick={() => setActiveTab('food')}
+                disabled={isModalBusy}
                 className={`btn-secondary`}
                 style={{
                   flex: 1,
@@ -106,6 +165,7 @@ export default function ShopModal({
               </button>
               <button
                 onClick={() => setActiveTab('gift')}
+                disabled={isModalBusy}
                 className={`btn-secondary`}
                 style={{
                   flex: 1,
@@ -121,49 +181,33 @@ export default function ShopModal({
 
             {/* Shop Grid */}
             <div className="shop-grid">
-              {activeTab === 'food' ? (
-                FOOD_ITEMS.map(item => (
+              {currentItems.map(item => {
+                const isFood = activeTab === 'food';
+
+                return (
                   <div key={item.id} className="shop-item">
                     <span className="shop-item-icon">{item.icon}</span>
                     <div className="shop-item-name">{item.name}</div>
                     <div className="shop-item-desc">{item.desc}</div>
-                    
+
                     <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                      <span>⚡+{item.energy} 体力</span>
-                      <span>❤️+{item.affection} 好感</span>
+                      {isFood ? (
+                        <>
+                          <span>⚡+{item.energy} 体力</span>
+                          <span>❤️+{item.affection} 好感</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>🎭+{item.mood} 心情</span>
+                          <span>❤️+{item.affection} 好感</span>
+                        </>
+                      )}
                     </div>
 
-                    <button
-                      onClick={() => handlePurchase(item, 'food')}
-                      className="btn-primary"
-                      style={{ padding: '6px 16px', fontSize: '13px', width: '100%' }}
-                    >
-                      <span className="coin-icon"></span> {item.cost} 购买
-                    </button>
+                    {renderPurchaseButton(item, isFood ? 'food' : 'gift')}
                   </div>
-                ))
-              ) : (
-                GIFT_ITEMS.map(item => (
-                  <div key={item.id} className="shop-item">
-                    <span className="shop-item-icon">{item.icon}</span>
-                    <div className="shop-item-name">{item.name}</div>
-                    <div className="shop-item-desc">{item.desc}</div>
-                    
-                    <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                      <span>🎭+{item.mood} 心情</span>
-                      <span>❤️+{item.affection} 好感</span>
-                    </div>
-
-                    <button
-                      onClick={() => handlePurchase(item, 'gift')}
-                      className="btn-primary"
-                      style={{ padding: '6px 16px', fontSize: '13px', width: '100%' }}
-                    >
-                      <span className="coin-icon"></span> {item.cost} 购买
-                    </button>
-                  </div>
-                ))
-              )}
+                );
+              })}
             </div>
             
             {/* Wallet Info */}
@@ -176,12 +220,30 @@ export default function ShopModal({
         {/* TIPPING MODE */}
         {mode === 'tipping' && (
           <div>
+            {lastFailedAction?.kind === 'tip' && (
+              <div className="shop-retry-banner">
+                <div className="shop-retry-copy">
+                  <div className="shop-retry-label">上一次打赏失败</div>
+                  <div className="shop-retry-preview">{lastFailedAction.label}</div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary shop-retry-action"
+                  onClick={retryLastFailedAction}
+                  disabled={isModalBusy}
+                >
+                  {isModalBusy ? '重试中...' : '重试打赏'}
+                </button>
+              </div>
+            )}
+
             {/* Presets Grid */}
             <div className="tipping-options">
               {TIPPING_TIERS.map((tier, idx) => (
                 <button
                   key={idx}
                   onClick={() => setSelectedTip(tier)}
+                  disabled={isModalBusy}
                   className={`tip-option-btn ${selectedTip.amount === tier.amount ? 'active' : ''}`}
                 >
                   <div className="tip-option-amount">¥{tier.amount}</div>
@@ -198,12 +260,14 @@ export default function ShopModal({
               <div className="payment-channel-selector">
                 <button
                   onClick={() => setPayChannel('wechat')}
+                  disabled={isModalBusy}
                   className={`pay-channel-btn ${payChannel === 'wechat' ? 'active wechat' : ''}`}
                 >
                   🟢 微信支付 (WeChat)
                 </button>
                 <button
                   onClick={() => setPayChannel('alipay')}
+                  disabled={isModalBusy}
                   className={`pay-channel-btn ${payChannel === 'alipay' ? 'active alipay' : ''}`}
                 >
                   🔵 支付宝 (Alipay)
@@ -230,7 +294,7 @@ export default function ShopModal({
               {/* Action Button */}
               <button
                 onClick={handleMockPay}
-                disabled={isProcessing}
+                disabled={isModalBusy}
                 className="btn-primary payment-status-sim"
                 style={{
                   padding: '10px',
@@ -240,7 +304,7 @@ export default function ShopModal({
                   boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
                 }}
               >
-                {isProcessing ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
+                {(isProcessing || isTipping) ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
               </button>
             </div>
           </div>

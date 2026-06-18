@@ -85,6 +85,110 @@ body {
   border-color: rgba(255, 117, 151, 0.25);
 }
 
+.notification-stack {
+  position: fixed;
+  top: 86px;
+  right: 20px;
+  z-index: 1600;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+}
+
+.notification-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(16, 10, 24, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  animation: slide-toast-in 0.28s ease-out;
+}
+
+.notification-info {
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.notification-warning {
+  border-color: rgba(255, 210, 105, 0.32);
+}
+
+.notification-error {
+  border-color: rgba(255, 117, 151, 0.34);
+}
+
+.notification-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.notification-message {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.notification-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.notification-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sync-status-banner {
+  width: min(var(--content-max-width), calc(100% - 40px));
+  margin: 16px auto 0;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(55, 24, 34, 0.82);
+  border-color: rgba(255, 117, 151, 0.28);
+}
+
+.sync-status-copy {
+  min-width: 0;
+}
+
+.sync-status-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffd6df;
+  margin-bottom: 2px;
+}
+
+.sync-status-message {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sync-status-action {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  font-size: 13px;
+}
+
 /* Dynamic glow effect */
 .glow-text {
   text-shadow: 0 0 8px rgba(255, 117, 151, 0.6);
@@ -156,6 +260,17 @@ body {
   100% {
     transform: translateY(110vh) rotate(360deg);
     opacity: 0;
+  }
+}
+
+@keyframes slide-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
   }
 }
 
@@ -366,6 +481,22 @@ button {
     grid-template-columns: 1fr;
     padding: 0 15px 15px;
     margin: 10px auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .notification-stack {
+    top: 78px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+
+  .sync-status-banner {
+    width: calc(100% - 24px);
+    margin-top: 12px;
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
@@ -590,6 +721,46 @@ button {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-pink);
+}
+
+.chat-retry-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 117, 151, 0.08);
+  border: 1px solid rgba(255, 117, 151, 0.18);
+  margin-bottom: 12px;
+}
+
+.chat-retry-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-retry-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-pink);
+}
+
+.chat-retry-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.chat-retry-action {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .chat-messages {
@@ -821,6 +992,43 @@ button {
   grid-template-columns: repeat(2, 1fr);
   gap: 15px;
   margin-bottom: 20px;
+}
+
+.shop-retry-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 117, 151, 0.08);
+  border: 1px solid rgba(255, 117, 151, 0.18);
+  margin-bottom: 16px;
+}
+
+.shop-retry-copy {
+  min-width: 0;
+}
+
+.shop-retry-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-pink);
+  margin-bottom: 2px;
+}
+
+.shop-retry-preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shop-retry-action {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .shop-item {
@@ -1114,4 +1322,3 @@ button {
   transform: translate(-50%, -50%);
   line-height: 1;
 }
-

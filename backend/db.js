@@ -1,16 +1,25 @@
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createLogger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, 'database.sqlite');
+const dbPath = process.env.XIAOXIAI_DB_PATH || path.join(__dirname, 'database.sqlite');
+const logger = createLogger('db');
+let resolveDbReady;
+let rejectDbReady;
+export const dbReady = new Promise((resolve, reject) => {
+  resolveDbReady = resolve;
+  rejectDbReady = reject;
+});
 
 // Initialize database
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
-    console.error('Error opening SQLite database:', err.message);
+    logger.error('Error opening SQLite database', { dbPath, error: err });
+    rejectDbReady(err);
   } else {
-    console.log('Connected to SQLite database at:', dbPath);
+    logger.info('Connected to SQLite database', { dbPath });
     initializeTables();
   }
 });
@@ -56,6 +65,7 @@ async function initializeTables() {
         mood INTEGER DEFAULT 70,
         coins INTEGER DEFAULT 200,
         last_checkin TEXT,
+        last_task_reset TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -104,18 +114,36 @@ async function initializeTables() {
     // Migration: Add summary column to users if it doesn't exist
     try {
       await dbRun('ALTER TABLE users ADD COLUMN summary TEXT DEFAULT ""');
-      console.log('Migration: summary column added to users table.');
+      logger.info('Migration applied: users.summary column added');
     } catch (alterError) {
       // Ignore error if column already exists (SQLITE_ERROR: duplicate column name: summary)
       if (!alterError.message.includes('duplicate column name') && !alterError.message.includes('already exists')) {
-        console.warn('Migration warning (summary column):', alterError.message);
+        logger.warn('Migration warning for users.summary column', { error: alterError.message });
       }
     }
 
-    console.log('SQLite database tables initialized successfully.');
+    try {
+      await dbRun('ALTER TABLE users ADD COLUMN last_task_reset TEXT');
+      logger.info('Migration applied: users.last_task_reset column added');
+    } catch (alterError) {
+      if (!alterError.message.includes('duplicate column name') && !alterError.message.includes('already exists')) {
+        logger.warn('Migration warning for users.last_task_reset column', { error: alterError.message });
+      }
+    }
+
+    logger.info('SQLite database tables initialized successfully');
+    resolveDbReady();
   } catch (error) {
-    console.error('Error initializing SQLite tables:', error);
+    logger.error('Error initializing SQLite tables', { error });
+    rejectDbReady(error);
   }
 }
+
+export const closeDb = () => new Promise((resolve, reject) => {
+  db.close((err) => {
+    if (err) reject(err);
+    else resolve();
+  });
+});
 
 export default db;

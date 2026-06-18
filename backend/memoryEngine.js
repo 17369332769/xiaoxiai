@@ -1,8 +1,10 @@
 import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
 import { dbGet, dbRun, dbAll } from './db.js';
+import { createLogger } from './logger.js';
 
 dotenv.config();
+const logger = createLogger('memory');
 
 let openai = null;
 if (process.env.OPENAI_API_KEY) {
@@ -19,11 +21,11 @@ if (process.env.OPENAI_API_KEY) {
  */
 export async function reflectAndConsolidate(userId) {
   if (!openai) {
-    console.log('[MemoryEngine] Skipped reflection: OPENAI_API_KEY is not defined.');
+    logger.debug('Skipped reflection because OPENAI_API_KEY is not defined', { userId });
     return;
   }
 
-  console.log(`[MemoryEngine] Starting async reflection & memory consolidation for user: ${userId}`);
+  logger.info('Starting async reflection and memory consolidation', { userId });
 
   try {
     // 1. Fetch existing relationship summary & facts
@@ -46,7 +48,7 @@ export async function reflectAndConsolidate(userId) {
     recentMessages.reverse();
 
     if (recentMessages.length < 3) {
-      console.log('[MemoryEngine] Dialogue history too short to reflect. Skipping.');
+      logger.debug('Dialogue history too short to reflect', { userId, messageCount: recentMessages.length });
       return;
     }
 
@@ -92,12 +94,18 @@ Instructions:
     contentStr = contentStr.trim();
 
     const result = JSON.parse(contentStr);
-    console.log('[MemoryEngine] Consolidation successful. Extracted JSON:', result);
+    logger.info('Memory consolidation completed', {
+      userId,
+      hasSummary: Boolean(result.summary),
+      memoryCount: result.memories && typeof result.memories === 'object'
+        ? Object.keys(result.memories).length
+        : 0,
+    });
 
     // 4. Update the DB: Summary
     if (result.summary) {
       await dbRun('UPDATE users SET summary = ? WHERE id = ?', [result.summary.trim(), userId]);
-      console.log('[MemoryEngine] Database updated: users.summary');
+      logger.debug('Updated users.summary from memory consolidation', { userId });
     }
 
     // 5. Update the DB: Key-Value memories
@@ -113,10 +121,13 @@ Instructions:
           DO UPDATE SET memory_value = excluded.memory_value, updated_at = CURRENT_TIMESTAMP
         `, [userId, key.trim(), value.trim()]);
       }
-      console.log(`[MemoryEngine] Database updated: user_memories (${Object.keys(result.memories).length} facts)`);
+      logger.debug('Updated user_memories from memory consolidation', {
+        userId,
+        memoryCount: Object.keys(result.memories).length,
+      });
     }
 
   } catch (error) {
-    console.error('[MemoryEngine] Error during reflection and memory consolidation:', error);
+    logger.error('Error during reflection and memory consolidation', { userId, error });
   }
 }

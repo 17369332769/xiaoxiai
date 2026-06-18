@@ -1,7 +1,9 @@
-import React, { useRef, useEffect, useState } from 'react';
-import xiaoxiNormal from '../assets/xiaoxi_normal.png';
-import xiaoxiHappy from '../assets/xiaoxi_happy.png';
-import xiaoxiBlush from '../assets/xiaoxi_blush.png';
+import * as React from 'react';
+import xiaoxiNormal from '../assets/xiaoxi_normal.jpg';
+import xiaoxiHappy from '../assets/xiaoxi_happy.jpg';
+import xiaoxiBlush from '../assets/xiaoxi_blush.jpg';
+
+const { useRef, useEffect, useState } = React;
 
 const QUICK_PROMPTS = [
   '小希，你现在饿了吗？',
@@ -27,7 +29,7 @@ function AiMessage({ msg }) {
     }
   };
 
-  const handleAvatarClick = (e) => {
+  const handleAvatarClick = () => {
     const emoji = ['💖', '❤️', '💗', '💕', '🥰'][Math.floor(Math.random() * 5)];
     const newHeart = {
       id: Date.now() + Math.random(),
@@ -99,9 +101,17 @@ function UserMessage({ msg }) {
   );
 }
 
-export default function ChatBox({ chatHistory, sendMessage }) {
+export default function ChatBox({
+  chatHistory,
+  sendMessage,
+  lastFailedMessage = '',
+  retryLastFailedMessage,
+  isSendingMessage = false,
+  isInteractionLocked = false
+}) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
+  const isComposerDisabled = isSendingMessage || isInteractionLocked;
 
   // Auto-scroll to the bottom of the chat list
   useEffect(() => {
@@ -109,7 +119,7 @@ export default function ChatBox({ chatHistory, sendMessage }) {
   }, [chatHistory]);
 
   const handleSend = () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || isComposerDisabled) return;
     sendMessage(inputText);
     setInputText('');
   };
@@ -121,6 +131,7 @@ export default function ChatBox({ chatHistory, sendMessage }) {
   };
 
   const handleQuickPrompt = (promptText) => {
+    if (isComposerDisabled) return;
     sendMessage(promptText);
   };
 
@@ -130,9 +141,26 @@ export default function ChatBox({ chatHistory, sendMessage }) {
       <div className="chat-header">
         <span className="chat-title">💬 与 小希 甜蜜对话中</span>
         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          (体力耗尽后，回复增加的速度会变慢哦)
+          {isInteractionLocked ? '正在同步账号数据...' : (isSendingMessage ? '消息发送中...' : '(体力耗尽后，回复增加的速度会变慢哦)')}
         </span>
       </div>
+
+      {lastFailedMessage && (
+        <div className="chat-retry-banner">
+          <div className="chat-retry-copy">
+            <span className="chat-retry-label">上一条消息发送失败</span>
+            <span className="chat-retry-preview">{lastFailedMessage}</span>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary chat-retry-action"
+            onClick={retryLastFailedMessage}
+            disabled={isComposerDisabled}
+          >
+            {isSendingMessage ? '重试中...' : '重试发送'}
+          </button>
+        </div>
+      )}
 
       {/* Message Scroll View */}
       <div className="chat-messages">
@@ -159,6 +187,7 @@ export default function ChatBox({ chatHistory, sendMessage }) {
             key={idx}
             onClick={() => handleQuickPrompt(prompt)}
             className="suggest-btn"
+            disabled={isComposerDisabled}
           >
             {prompt}
           </button>
@@ -172,18 +201,19 @@ export default function ChatBox({ chatHistory, sendMessage }) {
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={isComposerDisabled}
           placeholder="说点甜言蜜语逗小希开心吧..."
           className="chat-input"
         />
         <button
           onClick={handleSend}
+          disabled={isComposerDisabled}
           className="btn-primary chat-send-btn"
-          title="发送消息"
+          title={isSendingMessage ? '消息发送中' : '发送消息'}
         >
-          🚀
+          {isSendingMessage ? '⏳' : '🚀'}
         </button>
       </div>
     </div>
   );
 }
-

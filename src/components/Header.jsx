@@ -1,16 +1,30 @@
-import React, { useState, useRef, useEffect } from 'react';
+import * as React from 'react';
+import { createClientLogger } from '../utils/clientLogger';
 
-export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInCompleted }) {
+const { useState, useRef } = React;
+const logger = createClientLogger('header');
+
+export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInCompleted, isCheckInPending, notify }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef(null);
+  const hasShownAudioHintRef = useRef(false);
 
   // Toggle Background Music
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
       audioRef.current.pause();
+      hasShownAudioHintRef.current = false;
     } else {
-      audioRef.current.play().catch(err => console.log("Audio play blocked by browser. Need user interaction first."));
+      audioRef.current.play().then(() => {
+        hasShownAudioHintRef.current = false;
+      }).catch((error) => {
+        logger.warn('Audio playback was blocked by the browser', { error });
+        if (!hasShownAudioHintRef.current) {
+          notify?.('浏览器拦截了背景音乐播放，再点一次音符按钮通常就能开启。', 'info', '播放提示');
+          hasShownAudioHintRef.current = true;
+        }
+      });
     }
     setIsPlaying(!isPlaying);
   };
@@ -45,7 +59,7 @@ export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInComp
         {/* Daily Check-in Button */}
         <button
           onClick={dailyCheckIn}
-          disabled={isCheckInCompleted}
+          disabled={isCheckInCompleted || isCheckInPending}
           className={`btn-secondary checkin-btn ${isCheckInCompleted ? 'completed' : ''}`}
           style={{
             padding: '6px 14px',
@@ -55,14 +69,14 @@ export default function Header({ onlineCount, coins, dailyCheckIn, isCheckInComp
             background: isCheckInCompleted ? 'rgba(34, 197, 94, 0.1)' : 'rgba(255, 117, 151, 0.15)',
             color: isCheckInCompleted ? '#4ade80' : '#ff7597',
             borderColor: isCheckInCompleted ? '#22c55e' : '#ff7597',
-            cursor: isCheckInCompleted ? 'not-allowed' : 'pointer',
+            cursor: (isCheckInCompleted || isCheckInPending) ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
             gap: '4px'
           }}
         >
           <span>📅</span>
-          <span>{isCheckInCompleted ? '已签到' : '每日签到'}</span>
+          <span>{isCheckInCompleted ? '已签到' : (isCheckInPending ? '签到中...' : '每日签到')}</span>
         </button>
 
         {/* Sound toggle button */}
