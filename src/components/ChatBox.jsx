@@ -135,12 +135,25 @@ export default function ChatBox({
 }) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+  const wasSendingRef = useRef(false);
   const isComposerDisabled = isSendingMessage || isInteractionLocked;
 
   // Auto-scroll to the bottom of the chat list
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
+
+  // The composer input is disabled while a message is in flight (and on a
+  // button click focus moves off it), so the browser drops focus. Once the
+  // send finishes, restore focus so the user can keep typing without having
+  // to click back into the field.
+  useEffect(() => {
+    if (wasSendingRef.current && !isSendingMessage && !isInteractionLocked) {
+      inputRef.current?.focus();
+    }
+    wasSendingRef.current = isSendingMessage;
+  }, [isSendingMessage, isInteractionLocked]);
 
   const handleSend = () => {
     if (!inputText.trim() || isComposerDisabled) return;
@@ -242,6 +255,7 @@ export default function ChatBox({
       {/* Chat Input Field */}
       <div className="chat-input-area">
         <input
+          ref={inputRef}
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}

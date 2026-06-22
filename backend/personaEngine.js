@@ -15,6 +15,15 @@ const FESTIVALS = {
   '12-31': '今天是一年的最后一天，谢谢你陪小希走过这一年，明年也要一起哦~',
 };
 
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+
+// Human-readable current date, e.g. "2026年6月22日 星期日". Injected into the chat
+// prompt so the model uses the correct year when forming web-search queries and
+// answers date-sensitive questions.
+export function getCurrentDateText(now = new Date()) {
+  return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${WEEKDAYS[now.getDay()]}`;
+}
+
 export function getTimeGreeting(now = new Date()) {
   const hour = now.getHours();
   if (hour < 5) return { slot: 'late_night', text: '夜深了，怎么还不睡呀？小希会担心你的身体的。' };
@@ -86,6 +95,7 @@ export function buildPersonaContext(user, now = new Date()) {
 
   const lines = [
     `[关系阶段] 当前你们处于「${tier.title}」(Lv.${user.level})。${tier.persona} 你可以称呼对方为「${tier.address}」。`,
+    `[今天日期] 今天是 ${getCurrentDateText(now)}。涉及实时或时间相关的信息时，请以这个日期为准。`,
     `[当前时段] ${timeGreeting.text}`,
   ];
   if (loginStreak >= 2) {

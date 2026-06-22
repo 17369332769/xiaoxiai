@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { humanizeMemoryKey } from '../../shared/memoryLabels.js';
 
 void React;
 
@@ -95,7 +96,7 @@ export default function MemoryModal({
             memories.map((memory) => (
               <div key={memory.key} className="memory-item">
                 <div style={{ minWidth: 0 }}>
-                  <div className="memory-key">{memory.key}</div>
+                  <div className="memory-key">{memory.label || humanizeMemoryKey(memory.key)}</div>
                   <div className="memory-value">{memory.value}</div>
                   {memory.updatedAt && (
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>

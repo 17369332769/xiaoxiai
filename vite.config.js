@@ -10,6 +10,8 @@ export default defineConfig({
     include: ['src/**/*.test.{js,jsx}'],
   },
   server: {
+    // Bind to all interfaces so other machines on the LAN can reach the dev server.
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

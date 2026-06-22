@@ -23,6 +23,7 @@ const {
   buildReplyFocusPrompt,
   categorizeMemories,
   generateAiResponse,
+  screenAiReply,
 } = await import('../apiRoutes.js');
 
 await dbModule.dbReady;
@@ -735,6 +736,11 @@ test('llm system prompt includes categorized memory sections and topic focus gui
 
   assert.equal(response.emotion, 'happy');
   assert.equal(llmCalls.length, 1);
+  // The happy path runs through the tools-enabled loop (model returned no tool_calls),
+  // NOT the legacy forced-JSON branch: tools are advertised and no JSON is forced.
+  assert.ok(Array.isArray(llmCalls[0].tools) && llmCalls[0].tools.length > 0, 'happy path advertises tools');
+  assert.ok(llmCalls[0].tools.some((t) => t.function.name === 'get_game_status'));
+  assert.equal(llmCalls[0].response_format, undefined);
   const systemMessage = llmCalls[0].messages[0].content;
   assert.match(systemMessage, /\[偏好与习惯\]/);
   assert.match(systemMessage, /favorite_drink: 拿铁/);
@@ -756,4 +762,303 @@ test('buildChatSystemPrompt falls back to empty-state memory sections cleanly', 
   assert.match(prompt, /\[偏好与习惯\]/);
   assert.match(prompt, /- 暂无记录/);
   assert.match(prompt, /如果没有合适的长期记忆，就根据当前对话自然回应/);
+});
+
+test('generateAiResponse runs a web search tool call and composes the final reply', async () => {
+  const userId = 'web_search_user';
+
+  // The model first asks to search, then composes a JSON reply from the results.
+  const llmCalls = [];
+  let createCount = 0;
+  const openai = {
+    chat: {
+      completions: {
+        create: async (payload) => {
+          llmCalls.push(payload);
+          createCount += 1;
+          if (createCount === 1) {
+            return {
+              choices: [
+                {
+                  message: {
+                    role: 'assistant',
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: 'call_1',
+                        type: 'function',
+                        function: { name: 'web_search', arguments: JSON.stringify({ query: '北京今天天气' }) },
+                      },
+                    ],
+                  },
+                },
+              ],
+            };
+          }
+          return {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    reply: '查了下，北京今天晴，记得多喝水哦，小希一直陪着你～',
+                    emotion: 'happy',
+                    affection_bump: 1,
+                    mood_bump: 2,
+                  }),
+                },
+              },
+            ],
+          };
+        },
+      },
+    },
+  };
+
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    fetchCalls.push({ url, options });
+    return {
+      ok: true,
+      text: async () => '',
+      json: async () => ({
+        code: 200,
+        data: {
+          webPages: {
+            value: [
+              {
+                name: '北京天气预报',
+                url: 'https://example.com/weather',
+                snippet: '北京今天晴，最高 28 度。',
+                siteName: '天气网',
+                datePublished: '2026-06-22',
+              },
+            ],
+          },
+        },
+      }),
+    };
+  };
+
+  process.env.BOCHA_API_KEY = 'test-bocha-key';
+  try {
+    const response = await generateAiResponse(
+      openai,
+      { summary: '' },
+      userId,
+      '北京今天天气怎么样呀？',
+      { info() {}, warn() {}, error() {} }
+    );
+
+    assert.equal(response.reply, '查了下，北京今天晴，记得多喝水哦，小希一直陪着你～');
+    assert.equal(response.emotion, 'happy');
+
+    // Two LLM calls: round 0 emits the tool call, round 1 returns the final reply.
+    assert.equal(llmCalls.length, 2);
+    assert.ok(Array.isArray(llmCalls[0].tools), 'first call advertises tools');
+    assert.ok(
+      llmCalls[0].tools.some((t) => t.function.name === 'web_search'),
+      'web_search is advertised among the skills'
+    );
+    // The loop keeps tools available across rounds (multi-step capable), and the
+    // round that produced the answer carries the fed-back tool result.
+    assert.ok(Array.isArray(llmCalls[1].tools), 'second round still advertises tools');
+
+    // The system prompt advertises the capability when a key is configured.
+    assert.match(llmCalls[0].messages[0].content, /\[联网搜索能力\]/);
+
+    // The real Bocha endpoint was hit and the result was fed back to the model.
+    assert.equal(fetchCalls.length, 1);
+    assert.match(fetchCalls[0].url, /bochaai\.com/);
+    assert.equal(fetchCalls[0].options.headers.Authorization, 'Bearer test-bocha-key');
+    const toolMessage = llmCalls[1].messages.find((m) => m.role === 'tool');
+    assert.ok(toolMessage, 'the answering round includes the tool result');
+    assert.match(toolMessage.content, /北京天气预报/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.BOCHA_API_KEY;
+  }
+});
+
+test('generateAiResponse keeps a single forced-JSON call when skills are disabled', async () => {
+  const llmCalls = [];
+  const openai = {
+    chat: {
+      completions: {
+        create: async (payload) => {
+          llmCalls.push(payload);
+          return {
+            choices: [
+              { message: { content: JSON.stringify({ reply: '抱抱你～', emotion: 'normal', affection_bump: 1, mood_bump: 1 }) } },
+            ],
+          };
+        },
+      },
+    },
+  };
+
+  // Snapshot + restore the env we mutate so this test is self-contained regardless
+  // of position/ordering (no reliance on being the last test in the file).
+  const prevBocha = process.env.BOCHA_API_KEY;
+  const prevSkills = process.env.AI_SKILLS_ENABLED;
+  delete process.env.BOCHA_API_KEY;
+  // The master kill switch restores the legacy single-call, guaranteed-JSON path.
+  process.env.AI_SKILLS_ENABLED = 'false';
+  try {
+    const response = await generateAiResponse(
+      openai,
+      { summary: '' },
+      'no_search_user',
+      '今天好累呀。',
+      { info() {}, warn() {}, error() {} }
+    );
+
+    assert.equal(response.reply, '抱抱你～');
+    assert.equal(llmCalls.length, 1);
+    assert.equal(llmCalls[0].response_format?.type, 'json_object');
+    assert.equal(llmCalls[0].tools, undefined);
+    assert.doesNotMatch(llmCalls[0].messages[0].content, /\[联网搜索能力\]/);
+  } finally {
+    if (prevBocha === undefined) delete process.env.BOCHA_API_KEY;
+    else process.env.BOCHA_API_KEY = prevBocha;
+    if (prevSkills === undefined) delete process.env.AI_SKILLS_ENABLED;
+    else process.env.AI_SKILLS_ENABLED = prevSkills;
+  }
+});
+
+// Helper: build a mock OpenAI client from a queue of canned responses, recording
+// every request payload. Each queue entry is either { tool_calls } or { content }.
+function mockOpenAiFromScript(llmCalls, script) {
+  let i = 0;
+  return {
+    chat: {
+      completions: {
+        create: async (payload) => {
+          llmCalls.push(payload);
+          const step = script[Math.min(i, script.length - 1)];
+          i += 1;
+          if (step.tool_calls) {
+            return { choices: [{ message: { role: 'assistant', content: null, tool_calls: step.tool_calls } }] };
+          }
+          return { choices: [{ message: { content: step.content } }] };
+        },
+      },
+    },
+  };
+}
+
+function toolCall(id, name, args = {}) {
+  return { id, type: 'function', function: { name, arguments: JSON.stringify(args) } };
+}
+
+const LOOP_USER = { summary: '', level: 2, affection: 20, energy: 80, mood: 70, coins: 120 };
+const FINAL_JSON = JSON.stringify({ reply: '查到啦，给你抱抱～', emotion: 'happy', affection_bump: 1, mood_bump: 2 });
+
+test('generateAiResponse forces a JSON compose after hitting MAX_TOOL_ROUNDS', async () => {
+  const llmCalls = [];
+  // Model keeps requesting a tool every round; only the forced compose answers.
+  const openai = mockOpenAiFromScript(llmCalls, [
+    { tool_calls: [toolCall('c1', 'get_game_status')] },
+    { tool_calls: [toolCall('c2', 'get_game_status')] },
+    { tool_calls: [toolCall('c3', 'get_game_status')] },
+    { content: FINAL_JSON },
+  ]);
+
+  const response = await generateAiResponse(openai, LOOP_USER, 'rounds_cap_user', '我们到几级了？', {
+    info() {}, warn() {}, error() {},
+  });
+
+  assert.equal(response.reply, '查到啦，给你抱抱～');
+  // 3 tool rounds + 1 forced compose.
+  assert.equal(llmCalls.length, 4);
+  const compose = llmCalls[3];
+  assert.equal(compose.response_format?.type, 'json_object');
+  assert.equal(compose.tools, undefined, 'forced compose drops tools');
+});
+
+test('generateAiResponse caps tool calls per turn and stubs the overflow', async () => {
+  const llmCalls = [];
+  // Six tool calls in one round: only MAX_TOOL_CALLS_PER_TURN (5) run; the 6th is stubbed.
+  const sixCalls = Array.from({ length: 6 }, (_, n) => toolCall(`s${n}`, 'get_game_status'));
+  const openai = mockOpenAiFromScript(llmCalls, [
+    { tool_calls: sixCalls },
+    { content: FINAL_JSON },
+  ]);
+
+  const response = await generateAiResponse(openai, LOOP_USER, 'calls_cap_user', '状态如何？', {
+    info() {}, warn() {}, error() {},
+  });
+
+  assert.equal(response.reply, '查到啦，给你抱抱～');
+  assert.equal(llmCalls.length, 2); // one tool round (capped) + forced compose
+  const toolMessages = llmCalls[1].messages.filter((m) => m.role === 'tool');
+  assert.equal(toolMessages.length, 6, 'every tool_call id is answered');
+  assert.ok(toolMessages.some((m) => /已达上限/.test(m.content)), 'overflow call is stubbed');
+});
+
+test('generateAiResponse repairs a non-JSON answer from a tools-enabled round', async () => {
+  const llmCalls = [];
+  // The non-forced answering round returns plain prose; the repair call returns JSON.
+  const openai = mockOpenAiFromScript(llmCalls, [
+    { content: '北京今天晴，记得带伞～' },
+    { content: JSON.stringify({ reply: '今天晴，记得带伞哦～', emotion: 'normal', affection_bump: 1, mood_bump: 1 }) },
+  ]);
+
+  const response = await generateAiResponse(openai, LOOP_USER, 'repair_user', '北京天气？', {
+    info() {}, warn() {}, error() {},
+  });
+
+  assert.equal(response.reply, '今天晴，记得带伞哦～');
+  assert.equal(llmCalls.length, 2);
+  assert.equal(llmCalls[1].response_format?.type, 'json_object', 'repair call forces JSON');
+});
+
+test('generateAiResponse runs multiple skills across rounds end-to-end', async () => {
+  const llmCalls = [];
+  const openai = mockOpenAiFromScript(llmCalls, [
+    { tool_calls: [toolCall('g1', 'get_game_status')] },
+    { tool_calls: [toolCall('w1', 'get_weather', { city: '北京' })] },
+    { content: FINAL_JSON },
+  ]);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      current_condition: [{ temp_C: '22', FeelsLikeC: '22', humidity: '50', lang_zh: [{ value: '多云' }] }],
+      nearest_area: [{ areaName: [{ value: '北京' }] }],
+    }),
+  });
+  try {
+    const response = await generateAiResponse(openai, LOOP_USER, 'multi_round_user', '我们几级了？北京天气怎么样？', {
+      info() {}, warn() {}, error() {},
+    });
+
+    assert.equal(response.reply, '查到啦，给你抱抱～');
+    assert.equal(llmCalls.length, 3);
+    // Both tool results were fed back with matching tool_call_ids.
+    const toolMessages = llmCalls[2].messages.filter((m) => m.role === 'tool');
+    assert.equal(toolMessages.length, 2);
+    assert.ok(toolMessages.some((m) => m.tool_call_id === 'g1' && /Lv\.2/.test(m.content)), 'game status used ctx.user');
+    assert.ok(toolMessages.some((m) => m.tool_call_id === 'w1' && /多云/.test(m.content)), 'weather result fed back');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('screenAiReply replaces an unsafe model reply with a safe fallback', () => {
+  const unsafe = screenAiReply(
+    { reply: '你可以去赌博网站试试呀', emotion: 'happy', affection_bump: 3, mood_bump: 5 },
+    { warn() {} }
+  );
+  assert.doesNotMatch(unsafe.reply, /赌博网站/);
+  assert.equal(unsafe.affection_bump, 0);
+  assert.equal(unsafe.mood_bump, 0);
+
+  const safe = screenAiReply(
+    { reply: '抱抱你～', emotion: 'happy', affection_bump: 2, mood_bump: 3 },
+    { warn() {} }
+  );
+  assert.equal(safe.reply, '抱抱你～');
+  assert.equal(safe.affection_bump, 2);
 });

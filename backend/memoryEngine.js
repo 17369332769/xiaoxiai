@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { dbGet, dbRun, dbAll } from './db.js';
 import { enforceMemoryCap, pruneStaleMemories, upsertMemory } from './memoryStore.js';
 import { createLogger } from './logger.js';
+import { MEMORY_LABELS, humanizeMemoryKey } from '../shared/memoryLabels.js';
 
 dotenv.config();
 const logger = createLogger('memory');
@@ -14,15 +15,6 @@ if (process.env.OPENAI_API_KEY) {
     baseURL: process.env.OPENAI_API_BASE_URL || 'https://api.deepseek.com/v1',
   });
 }
-
-const MEMORY_LABELS = {
-  favorite_drink: '常喝饮品',
-  favorite_food: '偏爱食物',
-  hobby: '最近爱好',
-  job: '当前身份',
-  study_goal: '近期目标',
-  stress_signal: '最近状态',
-};
 
 const MEMORY_CATEGORY_LABELS = {
   preference: '偏好',
@@ -146,7 +138,7 @@ function inferMemoryEventCategory(memoryKey) {
 }
 
 function describeMemoryTimelineEvent(memoryKey, memoryValue) {
-  const label = MEMORY_LABELS[memoryKey] || memoryKey;
+  const label = humanizeMemoryKey(memoryKey);
   return `小希刚记住了你的${label}：${memoryValue}`;
 }
 
@@ -321,7 +313,7 @@ function buildLocalRelationshipResult(oldSummary, oldMemoriesList, recentMessage
   const memoryHighlights = Array.from(memoryMap.entries())
     .filter(([, value]) => Boolean(value))
     .slice(0, 3)
-    .map(([key, value]) => `${MEMORY_LABELS[key] || key}是「${value}」`);
+    .map(([key, value]) => `${humanizeMemoryKey(key)}是「${value}」`);
 
   if (memoryHighlights.length > 0) {
     summarySegments.push(`她记住了${memoryHighlights.join('、')}。`);
@@ -361,7 +353,7 @@ export async function loadRelationshipProfile(userId) {
     summary: user?.summary || '',
     highlights: memories.map((memory) => ({
       key: memory.memory_key,
-      label: MEMORY_LABELS[memory.memory_key] || memory.memory_key,
+      label: humanizeMemoryKey(memory.memory_key),
       value: memory.memory_value,
       updatedAt: memory.updated_at,
     })),
@@ -444,6 +436,9 @@ export async function reflectAndConsolidate(userId) {
       .join('\n');
 
     // 3. Assemble Reflection Prompt
+    const allowedKeyList = Object.entries(MEMORY_LABELS)
+      .map(([key, label]) => `${key} (${label})`)
+      .join(', ');
     const systemPrompt = `You are a memory consolidation engine for an AI girlfriend companion "Xiaoxi".
 Your task is to analyze the recent conversation transcript between the User (玩家) and Xiaoxi (小希), and consolidate her memory records.
 
@@ -453,7 +448,7 @@ ${oldMemoriesFormatted || '无'}
 
 Instructions:
 1. Update the "summary" string: Incorporate new milestones, events, and relationship status. Keep it under 150 Chinese characters.
-2. Extract or update "memories": Key-value pairs representing facts about the user (e.g., job, hobbies, favorite food/drinks, upcoming exams, mood triggers). Keep keys short (e.g., favorite_drink, job, test_date). Max 10 keys.
+2. Extract or update "memories": Key-value pairs representing facts about the user. The "value" MUST be written in Chinese. For the "key", you MUST choose from this allowed list ONLY: ${allowedKeyList}. If a fact does not fit any of these keys, use the key "other_note". Do NOT invent new English keys. Max 10 keys.
 3. Return the result in raw JSON format matching this schema:
 {
   "summary": "updated summary text in Chinese",

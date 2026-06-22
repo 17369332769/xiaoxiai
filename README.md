@@ -37,6 +37,7 @@ xiaoxiai/
 - 后端：`Node.js`、`Express`
 - 数据库：`SQLite`
 - 大模型接入：兼容 OpenAI SDK 的接口配置
+- 联网搜索：可选接入博查（Bocha）Web Search，模型按需调用 `web_search` 工具
 
 ## 本地启动
 
@@ -90,8 +91,10 @@ cp backend/.env.example backend/.env
 - `OPENAI_API_KEY`：模型服务 API Key
 - `OPENAI_API_BASE_URL`：兼容 OpenAI SDK 的接口地址
 - `OPENAI_MODEL_NAME`：模型名称，例如 `gpt-4o-mini` 或 `deepseek-chat`
+- `BOCHA_API_KEY`：博查联网搜索密钥（可选）；留空则关闭联网搜索
 
 如果不配置 `OPENAI_API_KEY`，系统会退回到本地规则回复模式。
+配置 `BOCHA_API_KEY` 后，模型会在遇到天气、新闻、价格、近期事件等实时/事实性问题时自动联网搜索，日常情感闲聊不触发。
 
 ### 3. 启动后端
 

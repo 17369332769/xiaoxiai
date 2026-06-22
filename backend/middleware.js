@@ -4,9 +4,16 @@ import { AppError } from './appError.js';
 import { requestLogger } from './logger.js';
 
 export function createCorsMiddleware(allowedOrigin) {
+  // ALLOWED_ORIGIN may be a single origin or a comma-separated list, so the same
+  // backend can serve the local dev origin plus LAN origins (e.g. http://192.168.x.x:5173).
+  const allowList = String(allowedOrigin || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
   return cors({
     origin(origin, callback) {
-      if (!origin || origin === allowedOrigin) {
+      if (!origin || allowList.includes(origin)) {
         callback(null, true);
         return;
       }

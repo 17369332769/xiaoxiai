@@ -29,6 +29,8 @@ Copy-Item backend/.env.example backend/.env
 - `OPENAI_API_KEY`：外部模型服务密钥
 - `OPENAI_API_BASE_URL`：兼容 OpenAI SDK 的服务地址
 - `OPENAI_MODEL_NAME`：模型名，例如 `gpt-4o-mini`
+- `BOCHA_API_KEY`：博查（Bocha）联网搜索密钥；留空则关闭联网搜索（模型保持离线）。设置后，模型会在遇到实时/事实性问题（天气、新闻、价格、近期事件等）时按需调用 `web_search` 工具，日常情感闲聊不触发
+- `BOCHA_API_BASE_URL` / `BOCHA_RESULT_COUNT` / `BOCHA_TIMEOUT_MS`：博查接口地址、单次返回结果数（1-10，默认 5）、单次搜索超时（毫秒，默认 6000）
 
 ## Secrets & Admin
 

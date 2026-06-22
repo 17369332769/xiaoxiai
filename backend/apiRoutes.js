@@ -20,6 +20,7 @@ import {
 } from './gameplay.js';
 import { loadRelationshipProfile, reflectAndConsolidate } from './memoryEngine.js';
 import { getLocalAIResponse } from './aiRuntime.js';
+import { executeSkill, getEnabledSkills, getSkillsPromptBlock } from './skills/registry.js';
 import { checkContentSafety } from './contentSafety.js';
 import { buildPersonaContext, getStateConstrainedReply } from './personaEngine.js';
 import { recordDailyActive, recordEvent, recordFirstTime } from './analytics.js';
@@ -165,7 +166,7 @@ You must evaluate the conversation history and reply in a raw JSON format contai
   "mood_bump": number (0 to 10)
 }
 Even though the previous assistant messages in the chat history are shown as plain text for display purposes, your current response MUST be in JSON format.
-
+${getSkillsPromptBlock()}
 [关系摘要]
 前文历史与关系大意摘要: "${user.summary || '无'}"
 
@@ -182,6 +183,62 @@ Example:
   "affection_bump": 2,
   "mood_bump": 5
 }`;
+}
+
+// Per-call LLM timeout. Tool use adds extra round-trips per turn.
+const LLM_TIMEOUT_MS = 15000;
+// Cap on output tokens per call. Bounds the cost/latency of a single generation and,
+// importantly for DeepSeek's JSON Output mode, prevents the "unending whitespace
+// until the token limit" stall its docs warn about from burning the full timeout —
+// our replies are a small JSON object, so this is comfortably above what we need.
+const LLM_MAX_TOKENS = 512;
+// Max number of model<->tool round-trips in a single user turn. Each round is one
+// chat-completion call; the model may answer (no tool call) at any round. Bounds the
+// tool loop. Worst case for a turn that keeps requesting tools is MAX_TOOL_ROUNDS
+// tool rounds + 1 forced JSON compose call.
+const MAX_TOOL_ROUNDS = 3;
+// Cap on how many skill calls we actually execute across a single user turn, so a
+// fan-out of tool calls can't trigger an unbounded number of side effects.
+const MAX_TOOL_CALLS_PER_TURN = 5;
+
+// Safe canned reply used when the model's output (possibly steered by untrusted tool
+// results such as web-search snippets) trips the content-safety filter on the way out.
+const SAFE_FALLBACK_REPLY = '这个话题小希不太方便接呢，我们聊点别的轻松的好不好？';
+
+// Output-side safety net. Input is screened before generation, but with skills
+// enabled the model also sees untrusted tool content (search/recall results) that
+// could prompt-inject its reply. We re-screen the model's reply with the same filter
+// and, on a hit, discard the model text for a neutral safe reply. Exported for tests.
+export function screenAiReply(response, logger) {
+  const safety = checkContentSafety(response.reply);
+  if (safety.safe) {
+    return response;
+  }
+  logger?.warn?.('Blocked unsafe AI reply', { category: safety.category, matched: safety.matched });
+  return { reply: SAFE_FALLBACK_REPLY, emotion: 'normal', affection_bump: 0, mood_bump: 0 };
+}
+
+// Parses (and clamps) the model's raw reply into our response shape. The LLM
+// output is untrusted: we strip optional code fences, require a non-empty reply,
+// and clamp the numeric bumps so a bad value can't corrupt affection/mood.
+export function parseAiReply(rawContent) {
+  let contentStr = (rawContent || '').trim();
+  if (contentStr.startsWith('```json')) contentStr = contentStr.substring(7);
+  else if (contentStr.startsWith('```')) contentStr = contentStr.substring(3);
+  if (contentStr.endsWith('```')) contentStr = contentStr.substring(0, contentStr.length - 3);
+  contentStr = contentStr.trim();
+
+  const jsonContent = JSON.parse(contentStr);
+  if (typeof jsonContent.reply !== 'string' || !jsonContent.reply.trim()) {
+    throw new Error('model reply missing required "reply" field');
+  }
+
+  return {
+    reply: jsonContent.reply,
+    emotion: jsonContent.emotion || 'normal',
+    affection_bump: Math.max(0, Math.min(5, parseInt(jsonContent.affection_bump, 10) || 0)),
+    mood_bump: Math.max(0, Math.min(10, parseInt(jsonContent.mood_bump, 10) || 0)),
+  };
 }
 
 export async function generateAiResponse(openai, user, userId, text, logger) {
@@ -232,29 +289,128 @@ export async function generateAiResponse(openai, user, userId, text, logger) {
       });
     });
 
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL_NAME || 'gpt-4o-mini',
-      messages: llmMessages,
-      response_format: { type: 'json_object' },
-      timeout: 8000,
-    });
+    // Default to the DeepSeek family (the deployed base model) so an unset env can't
+    // send an OpenAI model id to a DeepSeek-compatible endpoint. Matches memoryEngine.
+    const model = process.env.OPENAI_MODEL_NAME || 'deepseek-chat';
 
-    let contentStr = completion.choices[0].message.content || '';
-    contentStr = contentStr.trim();
-    if (contentStr.startsWith('```json')) contentStr = contentStr.substring(7);
-    else if (contentStr.startsWith('```')) contentStr = contentStr.substring(3);
-    if (contentStr.endsWith('```')) contentStr = contentStr.substring(0, contentStr.length - 3);
-    contentStr = contentStr.trim();
+    let rawContent = '';
+    // Tracks whether `rawContent` came from a JSON-enforced call. DeepSeek treats
+    // `tools` and `response_format: json_object` as mutually exclusive modes, so the
+    // tool-decision turn is not JSON-enforced and may need a forced repair call.
+    let jsonForced = false;
 
-    const jsonContent = JSON.parse(contentStr);
-    // Clamp model-provided numbers to their documented ranges; the LLM output is
-    // untrusted and a negative value would corrupt affection/mood progress.
-    return {
-      reply: jsonContent.reply,
-      emotion: jsonContent.emotion || 'normal',
-      affection_bump: Math.max(0, Math.min(5, parseInt(jsonContent.affection_bump, 10) || 0)),
-      mood_bump: Math.max(0, Math.min(10, parseInt(jsonContent.mood_bump, 10) || 0)),
-    };
+    const enabledSkills = getEnabledSkills();
+
+    if (enabledSkills.length > 0) {
+      // Multi-round tool loop: each round is one tools-enabled chat call. The model
+      // either answers directly (no tool call) or emits skill call(s); we execute
+      // them via the registry, feed results back, and loop. DeepSeek treats `tools`
+      // and `response_format: json_object` as mutually exclusive, so these rounds
+      // are NOT JSON-enforced — a final answer is parsed with a repair fallback, and
+      // if the loop ends still wanting tools we force one JSON compose (tools off).
+      const tools = enabledSkills.map((skill) => skill.schema);
+      const ctx = { user, userId, logger };
+      let usedAnyTool = false;
+      let answered = false;
+      let totalToolCalls = 0;
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        const decision = await openai.chat.completions.create({
+          model,
+          messages: llmMessages,
+          tools,
+          tool_choice: 'auto',
+          max_tokens: LLM_MAX_TOKENS,
+          timeout: LLM_TIMEOUT_MS,
+        });
+
+        const message = decision.choices[0].message;
+        const toolCalls = message.tool_calls || [];
+
+        if (toolCalls.length === 0) {
+          // No tool calls this round: the model produced its (hopefully JSON) reply.
+          // Not JSON-enforced, so the parse step below may repair it once if needed.
+          // (DeepSeek does not return content alongside tool_calls; if a model ever
+          // did, the content on a tool-call round is intentionally ignored and the
+          // tools are run instead.)
+          rawContent = message.content || '';
+          answered = true;
+          break;
+        }
+
+        usedAnyTool = true;
+        llmMessages.push(message);
+
+        for (const call of toolCalls) {
+          if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+            // Beyond the cap we still must answer every tool_call id, or the next
+            // API call errors on a missing tool response.
+            llmMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: '（本轮技能调用次数已达上限，已跳过）',
+            });
+            continue;
+          }
+          totalToolCalls += 1;
+          const toolResult = await executeSkill(call.function?.name, call.function?.arguments, ctx);
+          llmMessages.push({ role: 'tool', tool_call_id: call.id, content: toolResult });
+        }
+
+        // Once the call budget is spent, stop looping and force a final answer below
+        // rather than offer tools the model can no longer use.
+        if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+          break;
+        }
+      }
+
+      if (!answered && usedAnyTool) {
+        // Loop ended (round/call cap) while the model still wanted tools: force one
+        // final JSON compose with tools removed so we always return a clean reply.
+        const composed = await openai.chat.completions.create({
+          model,
+          messages: llmMessages,
+          response_format: { type: 'json_object' },
+          max_tokens: LLM_MAX_TOKENS,
+          timeout: LLM_TIMEOUT_MS,
+        });
+        rawContent = composed.choices[0].message.content || '';
+        jsonForced = true;
+      }
+      // Otherwise `rawContent` is the model's direct answer (jsonForced stays false);
+      // the parse-with-repair step below handles non-JSON or empty output (an empty
+      // answered reply parses as a failure and flows through the same repair call).
+    } else {
+      // No skills enabled (master switch off / all gated off): single forced-JSON
+      // call — the legacy fast path with guaranteed structured output.
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: llmMessages,
+        response_format: { type: 'json_object' },
+        max_tokens: LLM_MAX_TOKENS,
+        timeout: LLM_TIMEOUT_MS,
+      });
+      rawContent = completion.choices[0].message.content || '';
+      jsonForced = true;
+    }
+
+    try {
+      return screenAiReply(parseAiReply(rawContent), logger);
+    } catch (parseError) {
+      // A JSON-enforced turn that still failed to parse is a hard error.
+      if (jsonForced) throw parseError;
+      // Otherwise an un-forced (tools-enabled) turn didn't return clean JSON; repair
+      // it with one forced-JSON call so the common (no-tool) path stays a single
+      // request whenever the model already complied.
+      const repair = await openai.chat.completions.create({
+        model,
+        messages: llmMessages,
+        response_format: { type: 'json_object' },
+        max_tokens: LLM_MAX_TOKENS,
+        timeout: LLM_TIMEOUT_MS,
+      });
+      return screenAiReply(parseAiReply(repair.choices[0].message.content || ''), logger);
+    }
   } catch (llmError) {
     logger.warn('LLM generation failed; falling back to local dialog engine', {
       userId,

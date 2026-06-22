@@ -1,5 +1,6 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { createLogger } from './logger.js';
+import { humanizeMemoryKey } from '../shared/memoryLabels.js';
 
 const logger = createLogger('memory-store');
 
@@ -59,13 +60,16 @@ export function isValidMemoryEntry(key, value) {
 }
 
 export async function listMemories(userId) {
-  return dbAll(
+  const rows = await dbAll(
     `SELECT memory_key as key, memory_value as value, COALESCE(weight, 1) as weight,
             strftime('%Y-%m-%d %H:%M', updated_at, 'localtime') as updatedAt
      FROM user_memories WHERE user_id = ?
      ORDER BY weight DESC, updated_at DESC`,
     [userId]
   );
+  // Attach a human-friendly Chinese label so the UI never shows the raw
+  // English snake_case key produced by the consolidation model.
+  return rows.map((row) => ({ ...row, label: humanizeMemoryKey(row.key) }));
 }
 
 export async function getMemory(userId, key) {
