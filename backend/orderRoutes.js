@@ -1,7 +1,7 @@
 import { dbGet, dbRun } from './db.js';
 import { AppError } from './appError.js';
 import { TIPPING_TIERS } from './gameConfig.js';
-import { asyncHandler, sanitizeUserId, sendJson, validateChoice } from './httpUtils.js';
+import { asyncHandler, generateId, sendJson, validateChoice } from './httpUtils.js';
 import {
   createOrder,
   getOrder,
@@ -23,9 +23,14 @@ import { pushBroadcast } from './broadcasts.js';
 //   2. /api/payment/callback -> verify the gateway signature, then idempotently
 //      settle (credit coins exactly once). Replays and gateway retries are safe.
 //   3. /api/order/query  -> poll order status.
-export function registerOrderRoutes(app, { paymentSecret, presence, logger }) {
+export function registerOrderRoutes(app, { paymentSecret, presence, logger, resolveUser, allowSimulatedPayment = false }) {
+  // Authenticate order create/query (resolved to req.userId). The gateway
+  // webhook /api/payment/callback is intentionally NOT covered — it has no
+  // userId and is authenticated by HMAC signature instead.
+  app.use(['/api/order'], resolveUser);
+
   app.post('/api/order/create', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const amount = String(req.body?.amount);
     const paymentMethod = validateChoice(req.body?.paymentMethod, ['wechat', 'alipay'], 'paymentMethod');
     const tier = TIPPING_TIERS[amount];
@@ -38,22 +43,28 @@ export function registerOrderRoutes(app, { paymentSecret, presence, logger }) {
     const order = await createOrder(userId, tier, paymentMethod);
     await recordEvent(userId, 'order_create', { amount: tier.amount, paymentMethod });
 
-    // Simulated gateway notification, signed with the shared secret.
-    const callbackParams = {
-      out_trade_no: order.out_trade_no,
-      total_amount: tier.amount,
-      gateway_txn_id: `${paymentMethod === 'wechat' ? 'WX' : 'ALI'}${Date.now()}`,
-      result: 'SUCCESS',
-    };
-    const sign = signParams(callbackParams, paymentSecret);
-
-    sendJson(res, {
+    const response = {
       order: serializeOrder(order),
       coins: tier.coins,
       // The QR string is illustrative only — real gateways return a code_url.
       qrContent: `xiaoxiai://pay?out_trade_no=${order.out_trade_no}&amount=${tier.amount}`,
-      simulatedCallback: { ...callbackParams, sign },
-    });
+    };
+
+    // SECURITY: only in demo mode does the server hand the client a pre-signed
+    // gateway callback to replay. In production a real WeChat/Alipay gateway
+    // holds PAYMENT_SECRET and posts the callback server-to-server, so a client
+    // can never forge a valid signature to self-credit coins.
+    if (allowSimulatedPayment) {
+      const callbackParams = {
+        out_trade_no: order.out_trade_no,
+        total_amount: tier.amount,
+        gateway_txn_id: `${paymentMethod === 'wechat' ? 'WX' : 'ALI'}${Date.now()}`,
+        result: 'SUCCESS',
+      };
+      response.simulatedCallback = { ...callbackParams, sign: signParams(callbackParams, paymentSecret) };
+    }
+
+    sendJson(res, response);
   }));
 
   app.post('/api/payment/callback', asyncHandler(async (req, res) => {
@@ -88,7 +99,7 @@ export function registerOrderRoutes(app, { paymentSecret, presence, logger }) {
 
     // Side effects only on the first successful settlement.
     if (settlement.settled) {
-      const sysMsgId = `sys-recharge-${Date.now()}`;
+      const sysMsgId = generateId('sys-recharge');
       const sysText = `💳 充值成功！你为小希充值了 ¥${order.tier_amount}，获得 ${order.coins} 爱心币，余额已到账~`;
       await dbRun(
         'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "system", ?, "normal")',
@@ -109,7 +120,7 @@ export function registerOrderRoutes(app, { paymentSecret, presence, logger }) {
   }));
 
   app.post('/api/order/query', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const orderId = typeof req.body?.orderId === 'string' ? req.body.orderId : null;
     const outTradeNo = typeof req.body?.outTradeNo === 'string' ? req.body.outTradeNo : null;
     if (!orderId && !outTradeNo) {

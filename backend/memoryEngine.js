@@ -361,12 +361,41 @@ export async function loadRelationshipProfile(userId) {
   };
 }
 
+// Per-user reflection serializer. The worker does a read-modify-delete over
+// user_memories (upsert -> prune -> enforceMemoryCap), which is NOT atomic across
+// its awaits, so two concurrent runs for the same user could miscount the cap or
+// over/under-evict. Triggers fire-and-forget every 5th message, so overlap is
+// real. We CHAIN rather than coalesce: a new call waits for any in-flight run to
+// finish, then runs a FRESH reflection. This guarantees runs never overlap for
+// one user, AND that the awaited (no-openai) caller's just-written messages are
+// included in the run whose result it reads back in the same request.
+const inFlightReflections = new Map();
+
 /**
  * Asynchronous Background Reflection & Memory Consolidation Worker
  * Analyzes recent chat logs, updates the rolling relationship summary,
  * and extracts semantic facts into key-value memories.
+ *
+ * Serialized per user (see inFlightReflections). Always resolves (the inner
+ * worker swallows and logs errors), so fire-and-forget callers are safe.
  */
-export async function reflectAndConsolidate(userId) {
+export function reflectAndConsolidate(userId) {
+  const prev = inFlightReflections.get(userId) || Promise.resolve();
+  const tracked = prev
+    .catch(() => {})
+    .then(() => runReflection(userId))
+    .finally(() => {
+      // Only clear the slot if this is still the tail of the chain (a later call
+      // may have already queued behind us).
+      if (inFlightReflections.get(userId) === tracked) {
+        inFlightReflections.delete(userId);
+      }
+    });
+  inFlightReflections.set(userId, tracked);
+  return tracked;
+}
+
+async function runReflection(userId) {
   logger.info('Starting async reflection and memory consolidation', { userId });
 
   try {

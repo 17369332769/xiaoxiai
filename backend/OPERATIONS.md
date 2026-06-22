@@ -16,11 +16,15 @@ Copy-Item backend/.env.example backend/.env
 - `ALLOWED_ORIGIN`：允许访问 API 的前端来源，默认 `http://localhost:5173`
 - `RATE_LIMIT_WINDOW_MS`：限流窗口，默认 `60000`
 - `RATE_LIMIT_MAX_REQUESTS`：每个 IP 在窗口内允许的请求数，默认 `60`
+- `TRUST_PROXY`：Express `trust proxy` 设置，决定如何从 `X-Forwarded-For` 还原真实客户端 IP，默认 `loopback`（适配"本机 Nginx 反代到 127.0.0.1"）。**反代后必须正确设置**：否则 `req.ip` 会塌成代理回环地址，使限流与登录防爆破退化为全站共享一个计数桶（整站/单账号锁定 DoS）。上游为单层负载均衡时设为跳数 `1`；切勿用 `true`，除非边缘已剥离客户端伪造的 `X-Forwarded-For`
 - `LOG_LEVEL`：日志级别，可选 `debug`、`info`、`warn`、`error`
 - `LOG_REQUESTS`：是否记录请求日志，默认 `true`
 - `EXTRA_BLOCKED_WORDS`：聊天内容安全过滤的额外屏蔽词（逗号分隔），追加到内置词表
 - `MEMORY_CAP`：每个用户长期记忆条数上限，默认 `20`；超出后按权重（被反复提及的事实权重更高）和时间淘汰，非法/缺省值回落到 `20`
 - `MEMORY_TTL_DAYS`：长期记忆失效天数，默认 `0`（关闭）；>0 时在记忆整理阶段清理 `updated_at` 超过 N 天且权重 ≤ 1（未被反复提及）的陈旧记忆，高权重重要记忆不因时间删除，非法/缺省值回落到 `0`
+- `CHAT_HISTORY_CAP`：每个用户保留的聊天消息条数上限，默认 `300`；在 `/api/user/sync` 时裁剪最旧消息，防 `chat_messages` 无限增长（同步只展示最近 40 条，记忆整理只读最近 15 条，故 300 留有充裕余量），非法/缺省回落到 `300`
+- `AUTH_TOKEN_TTL_DAYS`：账号登录令牌有效期（天），默认 `30`；过期令牌被拒，前端随后降级为游客并提示重新登录，非法/缺省回落到 `30`
+- `ALLOW_SIMULATED_PAYMENT`：**仅演示用**开关，默认 `false`。为 `true` 时 `/api/action/tip` 不经真实支付即时发币、且 `/api/order/create` 会下发可被客户端回放的已签名回调——两者都等于免费铸币。**生产必须保持 `false`/不设**；额外保险：`NODE_ENV=production` 下即使该值为 `true` 也会被强制关闭并打 error 日志
 - `XIAOXIAI_DB_PATH`：SQLite 文件路径，默认是 `backend/database.sqlite`（本地运行时生成，不建议提交到仓库）
 - `PRESENCE_BASELINE`：在真实在线人数上叠加的展示基数，默认 `0`
 - `PAYMENT_SECRET`：支付回调签名密钥（HMAC-SHA256），生产环境必须设置为强随机值
@@ -35,9 +39,10 @@ Copy-Item backend/.env.example backend/.env
 ## Secrets & Admin
 
 - `PAYMENT_SECRET` / `AUTH_SECRET` 未设置时会使用内置开发默认值，并在启动日志打印 warning。生产部署务必通过环境变量覆盖，且不要写入版本库。
-- `ADMIN_TOKEN` 默认空，此时运营后台返回 `ADMIN_DISABLED`。设置后访问 `/admin.html`，在登录框输入该令牌即可进入；接口侧通过 `x-admin-token` 请求头做常量时间校验。
-- 账号密码使用 `scrypt` 加盐哈希存储，登录令牌为 HMAC 签名的紧凑串（演示版未做过期与刷新，生产可在此基础上加 `exp`）。
-- 支付回调使用 `PAYMENT_SECRET` 对回调参数做 HMAC 验签，并校验金额与订单是否一致；发币通过条件 UPDATE 抢占订单状态实现幂等（重复回调不会重复发币）。
+- `ADMIN_TOKEN` 默认空，此时运营后台返回 `ADMIN_DISABLED`。设置后访问 `/admin.html`，在登录框输入该令牌即可进入；接口侧**仅**通过 `x-admin-token` 请求头做常量时间校验（不再接受请求体内的 `adminToken`，避免随日志泄露）。
+- 管理操作（退款、公告发布/下架）会写入 `admin_audit` 审计表，可通过 `POST /api/admin/audit` 查看（动作、目标、IP、时间）。
+- 账号密码使用 `scrypt` 加盐哈希存储；登录令牌为 HMAC 签名的紧凑串，**带 `exp` 过期**（`AUTH_TOKEN_TTL_DAYS`，默认 30 天）。鉴权模型：业务接口校验该令牌，绑定了正式账号的 `userId` 只能凭有效令牌操作（防越权接管），未绑定游客仍可无令牌游玩；令牌过期/失效后请求返回 `AUTH_REQUIRED`，前端自动降级游客并提示重登。生产可继续补充刷新令牌轮换。
+- 支付回调使用 `PAYMENT_SECRET` 对回调参数做 HMAC 验签，并校验金额与订单是否一致；发币通过条件 UPDATE 抢占订单状态实现幂等（重复回调不会重复发币）。生产环境只有持有 `PAYMENT_SECRET` 的真实网关能产生有效回调（`ALLOW_SIMULATED_PAYMENT` 保持关闭时，客户端无法自助发币）。
 
 ## Secret Handling
 
@@ -185,13 +190,34 @@ server {
 - `PAYMENT_SECRET`：支付回调签名密钥（HMAC），设为强随机值。
 - `ADMIN_TOKEN`：运营后台令牌；不设则后台 fail-closed 全禁用，设则务必使用高强度令牌。
 - `ALLOWED_ORIGIN`：允许访问 API 的前端来源，必须指向前端真实域名（例如 `https://your-domain.example.com`），否则跨域请求会被 `FORBIDDEN_ORIGIN` 拒绝。
+- `TRUST_PROXY`：按反代拓扑设置（本机 Nginx 用默认 `loopback`，上游单层 LB 用 `1`）。**不设/设错会让限流与防爆破退化为全站单桶**，是真实的 DoS 面。
+- `ALLOW_SIMULATED_PAYMENT`：必须保持 `false`/不设，否则客户端可免费铸币（`NODE_ENV=production` 会再兜底强制关闭）。
 
 `backend/.env` 承载这些密钥，**绝不入库**；用 `npm run check:secrets` 自检。
+
+> 时区：签到 / 每日任务重置 / DAU 统计都基于**服务器本地时间**。请把后端进程时区固定为业务目标时区（如 `TZ=Asia/Shanghai`，可在 systemd `Environment=TZ=Asia/Shanghai` 或容器环境里设置），否则"今天"的边界会与用户预期错位。
 
 ### 5. 数据库与备份
 
 - 生产 SQLite 文件路径用 `XIAOXIAI_DB_PATH` 指向一个持久化、可备份的目录（例如 `/var/lib/xiaoxiai/xiaoxiai.sqlite`），不要留在仓库目录内，避免发布覆盖。
 - 备份时同时关注主库 `*.sqlite` 以及 `*.sqlite-wal`、`*.sqlite-shm`；数据库正在写入时建议先停服再复制，避免备份不一致（详见下方 SQLite Notes）。
+- SQLite 已在连接初始化时启用 `WAL` + `busy_timeout=5000`，缓解并发写下的 `SQLITE_BUSY`；这也是上面要连同 `-wal`/`-shm` 一起备份的原因。
+
+### 6. 健康检查与监控
+
+- `GET /api/health`：探活端点，检查数据库连通后返回 `200 {ok:true,db:"up"}` 或 `503 {ok:false,db:"down"}`。它挂在 CORS/限流之前、无需鉴权，可直接给负载均衡 / 守护进程 / uptime 监控做探针。Nginx 可加：
+
+```nginx
+    location = /api/health {
+        proxy_pass http://127.0.0.1:3000;
+    }
+```
+
+- pm2/systemd 探活、或外部 uptime 服务定时请求该端点即可；返回 503 说明后端起着但数据库不可用，应介入排查。
+
+### 7. 持续集成（CI）
+
+仓库提供 `.github/workflows/ci.yml`：在 push 到 `main` 与每个 PR 上用 Node 22 安装根/后端依赖并执行 `npm run verify`（密钥自检 + lint + 前后端测试 + 构建）。合并前 CI 须为绿。
 
 ## Logging
 

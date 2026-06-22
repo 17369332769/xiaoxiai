@@ -5,6 +5,7 @@ import { createRequireAdmin } from './adminAuth.js';
 import { getStats, loadRecentEvents } from './analytics.js';
 import { deactivateBroadcast, loadBroadcasts, pushBroadcast } from './broadcasts.js';
 import { refundOrder, serializeOrder } from './orders.js';
+import { loadAdminAudit, recordAdminAudit } from './adminAudit.js';
 import {
   DAILY_TASKS,
   GROWTH_TASKS,
@@ -75,6 +76,7 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
     if (text.length > 200) throw new AppError(400, 'TEXT_TOO_LONG', 'announcement must be 200 chars or fewer');
     const priority = Number.isFinite(req.body?.priority) ? req.body.priority : 10;
     const id = await pushBroadcast('announcement', text, priority);
+    await recordAdminAudit('announcement_publish', { targetType: 'broadcast', targetId: id, detail: { text, priority }, ip: req.ip });
     sendJson(res, { id });
   }));
 
@@ -83,6 +85,7 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
     if (!id) throw new AppError(400, 'INVALID_PARAMETER', 'broadcast id is required');
     const ok = await deactivateBroadcast(id);
     if (!ok) throw new AppError(404, 'BROADCAST_NOT_FOUND', 'Broadcast not found');
+    await recordAdminAudit('announcement_deactivate', { targetType: 'broadcast', targetId: id, ip: req.ip });
     sendJson(res, {});
   }));
 
@@ -90,7 +93,23 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
     const orderId = typeof req.body?.orderId === 'string' ? req.body.orderId : '';
     if (!orderId) throw new AppError(400, 'INVALID_PARAMETER', 'orderId is required');
     const result = await refundOrder(orderId);
+    // Audit only an actual refund — a no-op (already-refunded race) didn't move
+    // money, so recording it would falsely imply funds were returned.
+    if (result.refunded) {
+      await recordAdminAudit('order_refund', {
+        targetType: 'order',
+        targetId: orderId,
+        detail: { coins: result.order?.coins },
+        ip: req.ip,
+      });
+    }
     sendJson(res, { refunded: result.refunded, order: serializeOrder(result.order) });
+  }));
+
+  app.post('/api/admin/audit', asyncHandler(async (req, res) => {
+    const limit = clampLimit(req.body?.limit, 80, 300);
+    const audit = await loadAdminAudit(limit);
+    sendJson(res, { audit });
   }));
 
   // Read-only snapshot of the live gameplay configuration (shop items, tiers,

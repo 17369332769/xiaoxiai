@@ -11,6 +11,7 @@ import {
   verifyPassword,
 } from './accounts.js';
 import { recordEvent } from './analytics.js';
+import { createLoginThrottle } from './authThrottle.js';
 
 async function ensureUserRow(userId) {
   let user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
@@ -34,6 +35,8 @@ function publicAccount(account) {
 //   login    -> returns the canonical userId for cross-device sync
 //   bind     -> attach a credential to an already-playing guest profile
 export function registerAccountRoutes(app, { authSecret }) {
+  const loginThrottle = createLoginThrottle();
+
   app.post('/api/auth/register', asyncHandler(async (req, res) => {
     const { identifier, identifierType, password } = normalizeCredentials(req.body?.identifier, req.body?.password);
     const guestUserId = sanitizeUserId(req.body?.userId);
@@ -61,10 +64,20 @@ export function registerAccountRoutes(app, { authSecret }) {
       throw new AppError(400, 'INVALID_CREDENTIALS', '账号和密码不能为空');
     }
 
+    // Brute-force guard: after repeated failures for this identifier+IP, lock out
+    // briefly so credential stuffing is expensive.
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const gate = loginThrottle.check(identifier, ip);
+    if (!gate.allowed) {
+      throw new AppError(429, 'TOO_MANY_ATTEMPTS', '登录尝试过于频繁，请稍后再试');
+    }
+
     const account = await findAccountByIdentifier(identifier);
     if (!account || !verifyPassword(password, account.password_hash)) {
+      loginThrottle.recordFailure(identifier, ip);
       throw new AppError(401, 'INVALID_LOGIN', '账号或密码不正确');
     }
+    loginThrottle.recordSuccess(identifier, ip);
 
     await ensureUserRow(account.user_id);
     await recordEvent(account.user_id, 'account_login', {});

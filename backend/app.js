@@ -8,6 +8,8 @@ import { registerAnalyticsRoutes } from './analyticsRoutes.js';
 import { registerMemoryRoutes } from './memoryRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
 import { createPresenceTracker } from './presence.js';
+import { createResolveUser } from './resolveUser.js';
+import { dbGet } from './db.js';
 
 export function createApp({
   logger,
@@ -19,8 +21,32 @@ export function createApp({
   authSecret,
   adminToken,
   presenceBaseline = 0,
+  allowSimulatedPayment = false,
+  trustProxy = 'loopback',
 }) {
   const app = express();
+
+  // Behind the documented Nginx reverse proxy, the real client IP arrives in
+  // X-Forwarded-For. Express only honors it when 'trust proxy' is set; without
+  // this, req.ip collapses to the proxy's loopback address for every user,
+  // which would turn both the per-IP rate limiter and the login throttle into a
+  // single shared bucket (whole-site / victim-lockout DoS). Default 'loopback'
+  // suits the local-Nginx topology and is safe for direct dev connections; do
+  // NOT use `true` (it lets clients spoof X-Forwarded-For).
+  app.set('trust proxy', trustProxy);
+
+  // Liveness/readiness probe for load balancers and uptime monitors. Registered
+  // BEFORE CORS/rate-limit so health polls always succeed and never consume a
+  // rate-limit bucket; no auth (probes are anonymous). Reports DB connectivity.
+  app.get('/api/health', async (req, res) => {
+    try {
+      await dbGet('SELECT 1 AS ok');
+      res.json({ ok: true, db: 'up' });
+    } catch (error) {
+      logger?.error?.('Health check DB probe failed', { error: error?.message });
+      res.status(503).json({ ok: false, db: 'down' });
+    }
+  });
 
   applyCommonMiddleware(app, {
     allowedOrigin,
@@ -31,12 +57,15 @@ export function createApp({
   const presence = createPresenceTracker({ ttlMs: 60000, baseline: presenceBaseline });
   app.locals.presence = presence;
 
-  registerApiRoutes(app, { openai, logger, presence });
-  registerOrderRoutes(app, { paymentSecret, presence, logger });
+  // Token-aware userId resolver shared by every authenticated business route.
+  const resolveUser = createResolveUser(authSecret);
+
+  registerApiRoutes(app, { openai, logger, presence, resolveUser, allowSimulatedPayment });
+  registerOrderRoutes(app, { paymentSecret, presence, logger, resolveUser, allowSimulatedPayment });
   registerAccountRoutes(app, { authSecret });
-  registerCommunityRoutes(app, { presence });
-  registerAnalyticsRoutes(app);
-  registerMemoryRoutes(app);
+  registerCommunityRoutes(app, { presence, resolveUser });
+  registerAnalyticsRoutes(app, { resolveUser });
+  registerMemoryRoutes(app, { resolveUser });
   registerAdminRoutes(app, { adminToken, presence });
 
   app.use(createErrorHandler(logger));

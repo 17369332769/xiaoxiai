@@ -1,0 +1,189 @@
+# 小希 AI · 改进台账（Improvement Ledger）
+
+> 本台账记录基于代码审计得出的待办、优先级、负责方式与进度。
+> 创建于 2026-06-22。状态：⬜ 待办 / 🟡 进行中 / ✅ 完成 / ⏸ 暂缓（需用户决策）。
+
+## 执行方式
+
+- 采用多 agent workflow 推进：**设计（并行只读）→ 实现（单流串行）→ 审查+验证（并行）**。
+- 每完成一项更新本表「状态」「结论」列。
+- 未经用户许可不执行 `git commit`（见历史教训：workflow 子 agent 曾擅自提交）。
+
+---
+
+## P0 · 必须修（安全/正确性，本轮执行目标）
+
+| # | 项 | 文件 | 状态 | 结论 |
+|---|---|---|---|---|
+| P0-1 | **鉴权强制**：token 签发后从不校验，所有业务接口仅凭 body.userId 识别用户，已绑定账号无任何保护 | `resolveUser.js`(新) `app.js` 各 `*Routes.js` `src/utils/apiClient.js` | ✅ | resolveUser 中间件：按路由前缀挂载、token 优先、绑定账号无 token → 401；前端自动带 Bearer。3 审查 agent 实测越权攻击均被 401 拦截，verdict=ship |
+| P0-2 | **免费刷币**：`/api/action/tip` 即时结算不经支付；**且** `/api/order/create` 由服务端自签回调体供客户端回放（审计新增发现 A1，同类漏洞） | `apiRoutes.js:716` `orderRoutes.js:42` | ✅ | 统一 `ALLOW_SIMULATED_PAYMENT`（默认关 + 生产强制关）同时守卫两路径；关时 tip→403、order/create 不下发可回放回调，真实签名回调仍可结算 |
+| ~~P0-3~~ | ~~.env 泄露~~ | — | ✅ | `.env` 未被 git 跟踪，`.gitignore` 已正确配置 |
+
+> **审计修正**：原 P0-2 仅覆盖 tip，遗漏了 `/api/order/create` 自签回调这条等价的免费刷币路径——只修 tip 不够。两者已合并，用同一开关守卫。
+
+### P0-1 设计要点（鉴权强制，向后兼容）
+- 新增 `resolveUser` 中间件：
+  1. 若请求带有效 `xxa_token` → userId 以 token 为准（authoritative），忽略/校验 body.userId。
+  2. 若无 token → 取 body.userId；**若该 userId 已绑定账号 → 拒绝（401，必须登录）**；否则按游客放行。
+- 效果：已绑定账号只能凭 token 访问（堵住接管），游客照旧（不破坏现有无 token 测试）。
+- 前端 `apiClient.postJson` 统一带 `Authorization: Bearer <xxa_token>`。
+- 需同步更新后端测试（验证带/不带 token、绑定账号拒绝无 token）。
+
+---
+
+## P1 · 产品完整性（规划，待用户排期）
+
+| # | 项 | 说明 | 状态 |
+|---|---|---|---|
+| P1-1 | 服务端流式 SSE 输出 | 现仅前端打字机模拟，首字延迟 = 整次 LLM 调用 | ⏸ |
+| P1-2 | 语音能力（TTS 回复 / STT 输入） | 陪伴品类近乎刚需，当前完全没有 | ⏸ |
+| P1-3 | 形象/换装系统 | 仅 3 张静态图；缺可永久收藏的变现点 | ⏸ |
+| P1-4 | 主动触达 / 召回 | 纯拉取式，无推送、无"想你了"定时消息 | ⏸ |
+| P1-5 | 玩法深化 | 约会剧情/分支/小游戏/纪念日 | ⏸ |
+| P1-6 | 记忆可主动编辑 | 现仅能删，不能"让她记住 X"/修改 | ⏸ |
+| P1-7 | 令牌过期/刷新/吊销 | 当前 token 无 exp、登出仅本地删 | ⏸ |
+| P1-8 | 注册验证 | 手机号/邮箱无 OTP，可注册任意号 | ⏸ |
+| P1-9 | 密码找回 | 无找回流程 | ⏸ |
+
+## P2 · 体验/变现/运营/合规（规划）
+
+| # | 项 | 说明 | 状态 |
+|---|---|---|---|
+| P2-1 | 会员订阅/首充/限时礼包 | 仅一次性打赏档位 | ⏸ |
+| P2-2 | 后台可写配置 | 现 `/api/admin/config` 只读，商品/任务硬编码需重部署 | ⏸ |
+| P2-3 | 管理操作审计日志 | 退款等敏感操作无留痕 | ⏸ |
+| P2-4 | 内容安全升级 | 现仅词表，需接入模型审核 + 实名/青少年模式（国内合规） | ⏸ |
+| P2-5 | 用户侧数据导出/注销 | 隐私合规缺口，无隐私政策/ToS | ⏸ |
+| P2-6 | 可观测性 | 无 Sentry/指标/健康检查/CI | ⏸ |
+| P2-7 | 数据层 | SQLite 单写入，无自动备份代码 | ⏸ |
+| P2-8 | i18n | 仅中文 | ⏸ |
+
+---
+
+## 审计新增发现（独立 agent 复核，按"P0 后优先级"排序）
+
+| # | 严重度 | 项 | 证据 | 状态 |
+|---|---|---|---|---|
+| A1 | 高 | `/api/order/create` 自签回调 = 第二条免费刷币路径 | `orderRoutes.js:42-56` | ✅ 已并入 P0-2 修复 |
+| A2 | 高 | 登录/注册无防爆破（仅全局每 IP 限流） | `accountRoutes.js:55` | ✅ 第2轮：`authThrottle.js` 标识+IP 失败锁定 |
+| A12 | 高 | **未设 trust proxy**：Nginx 后 `req.ip` 全塌成 127.0.0.1 → 限流/防爆破退化为全站单桶（DoS+越锁）。审查发现的既有隐患 | `app.js` `middleware.js:31` | ✅ 第2轮：`app.set('trust proxy', TRUST_PROXY)`，默认 loopback，运行时已验证 |
+| C1/C2-合规 | 高 | 内容审核仅词表，无实名/青少年模式（国内合规阻断项） | `contentSafety.js:8` | ⏸ → P2-4 |
+| C2 | 高 | SQLite 无 WAL / 无 busy_timeout / 无备份；后台记忆整理可自撞 `SQLITE_BUSY` 500 | `db.js` | ✅ 第2轮：WAL+busy_timeout（备份仍 ⏸） |
+| A5 | 中 | `reflectAndConsolidate` fire-and-forget，记忆上限/淘汰读改删非原子 | `memoryEngine.js` | ✅ 第2轮：改为按用户**串行链式**（既防并发又保新鲜，解审查 medium） |
+| A4 | 中 | `/api/chat` 先扣体力/落库用户消息再生成，非事务，崩溃会留悬挂消息 | `apiRoutes.js:517-548` | ⏸ |
+| A7 | 中 | token 无 exp、无法吊销（P0-1 落地后即为安全 bug，非纯产品项） | `accounts.js:86` | ✅ 第2轮：加 exp+校验（吊销/刷新仍 ⏸） |
+| A6 | 中 | 登录切换 userId 直接丢弃游客存档，无合并/告警 | `useGameStore.js:312` | ✅ 第5轮：游客有进度时登录前两步确认（提示进度不合并，引导改用绑定）；审查抓到的"确认态跨开关残留"已修 |
+| A8 | 低 | `getTodayKey` 与 SQL `date()` 比较错位风险 | `gameplay.js:11` `analytics.js:84` | ✅ 第3轮**核实为非 bug**（getStats 两侧同源比较，两审查 agent 独立确认）；仅 locale 格式脆弱性，改有迁移成本，不动 |
+| A9 | 低 | `database.sqlite` 曾被提交进 git **历史**（含 PII/口令哈希/聊天）；当前树已干净但历史未清 | `git log -- backend/database.sqlite` | ⏸（推送前需清史） |
+| A10 | 低 | admin token 允许从 body 传入，易随日志泄露 | `adminAuth.js:14` | ✅ 第3轮：改为仅接受 `x-admin-token` 请求头 |
+| A11 | 低 | `chat_messages.id = prefix-${Date.now()}` 高频撞 UNIQUE（verify 日志可见） | `httpUtils.js` `apiRoutes.js` `orderRoutes.js` | ✅ 第2轮：`generateId()` 加随机后缀（`transactions.id` 仍 ⏸，影响小） |
+| C6 | 低 | `chat_messages` 无保留/清理策略，无限增长 | `db.js:117` | ✅ 第4轮：`pruneUserChat`（保留最新 `CHAT_HISTORY_CAP=300`），在 **sync** 触发（避开反思计数），裁剪所有消息类型 |
+| B7 | 低 | 前端硬编码假"最新广播"种子 + 假在线数 1314，真实 feed 前展示伪造社交证明 | `useGameStore.js:43` | ✅ 第3轮：删假广播种子+死代码 `createSimulatedRecentEvent`，在线数种子 1314→1 |
+| C3 | 中 | 无 `/health`、无指标、无 Sentry、无 CI | 全局缺失 | ✅ 第4轮 health；第6轮 CI（`.github/workflows/ci.yml` 跑 verify）；指标/Sentry 仍 ⏸ |
+| C4 | 中 | 退款/公告等管理操作无审计日志 | `adminRoutes.js:89` | ✅ 第3轮：`admin_audit` 表 + `adminAudit.js`，退款/公告发布/下架写入，`/api/admin/audit` 可查 |
+| B8 | 低 | 生产关闭模拟支付后，ShopModal 即时打赏/我已完成支付按钮成死路 | `src/components/ShopModal.jsx` | ✅ 第5轮：sync 透传 `allowSimulatedPayment`；关闭时隐藏即时打赏按钮、按订单有无回调隐藏"我已完成支付"，真实扫码升为主按钮 |
+| A2b | 低 | 防爆破仅 标识+IP，换 IP 可绕；`buckets` 超阈值才清扫 | `authThrottle.js` | ⏸（建议加纯标识维度二级锁；多实例需共享存储） |
+
+**建议 P0 后的下一步顺序**：A1(已并入) → C2 SQLite 加固 → A2/A7 鉴权防爆破+token exp → A6 登录数据合并 → C1/C5 合规基线。
+
+---
+
+## 本轮交付（P0）落地清单
+
+**改动文件**（均在工作树，未提交，等你 review）：
+- 新增：`backend/resolveUser.js`、`backend/tests/security.test.js`、`IMPROVEMENT_LEDGER.md`
+- 后端：`app.js` `server.js` `apiRoutes.js` `orderRoutes.js` `memoryRoutes.js` `analyticsRoutes.js` `communityRoutes.js`
+- 前端：`src/utils/apiClient.js`（带 Bearer）、`src/hooks/useGameStore.js`（401 恢复）
+- 文档/配置：`README.md` `backend/API.md` `backend/.env.example`、`backend/.env`(本地加 `ALLOW_SIMULATED_PAYMENT=true` 保留 demo)
+- 测试：`api.test.js` / `extended.test.js` 加开关与 3 条鉴权用例；新增 3 条安全用例
+
+**验证**：`npm run verify` 全绿（check:secrets + eslint + 前端 46 + 后端 84 + build），EXIT 0。
+
+**对抗式审查**（3 agent 并行，实测起服务发攻击请求）：均 verdict=**ship**，无 critical/high。已采纳的低/中级建议：
+- ✅ 修复（中）：绑定账号丢失 token 时前端不再误报"后端宕机"，改为清 token+降级游客+提示重登
+- ✅ 加固：`NODE_ENV=production` 下强制关闭 `ALLOW_SIMULATED_PAYMENT`（即使 .env 误设）
+- ✅ resolveUser 对"签名有效但 userId 畸形"的 token 改为宽松回退（与注释一致）
+- ✅ 安全用例加强：被拦截的 tip 不产生订单行；真实回调重放幂等不重复发币
+
+**审查提出、本轮未做的跟进项**（已记入下方 backlog）：
+- 生产模式下 ShopModal 的"即时打赏/我已完成支付"按钮会失效——需把 `ALLOW_SIMULATED_PAYMENT` 暴露给前端（如 `/api/config`）后隐藏/改文案。→ 新增 B8。
+- 新观察：`chat_messages.id = ai-${Date.now()}` 在高频调用下可能撞 UNIQUE（测试日志可见，非本轮引入）。→ 新增 A11。
+
+## 第2轮交付（可靠性 + 鉴权加固）
+
+**改动文件**（工作树，未提交）：
+- 新增：`backend/authThrottle.js`
+- 后端：`db.js`(WAL/busy_timeout) `memoryEngine.js`(串行链式) `accounts.js`(token exp) `accountRoutes.js`(防爆破) `app.js`+`server.js`(trust proxy) `httpUtils.js`(generateId) `apiRoutes.js`+`orderRoutes.js`(消息 id)
+- 测试：`extended.test.js` 加防爆破 + token 过期用例（后端 84→86）
+- 文档：`backend/API.md`（TOO_MANY_ATTEMPTS / token TTL / 节流）、`backend/.env.example`（AUTH_TOKEN_TTL_DAYS / TRUST_PROXY）
+
+**验证**：`npm run verify` 全绿（后端 86 + 前端 46 + build），EXIT 0；`SQLITE_CONSTRAINT` 日志噪音消失；trust proxy 运行时实测 XFF 生效。
+
+**对抗式审查**（workflow#3，3 agent，实测起服务攻击）：DB/回归=ship，鉴权=fix-needed。已采纳修复：
+- 🔴 修复（critical）：补 `trust proxy`（原 `req.ip` 在 Nginx 后全塌成 127.0.0.1，会让限流+防爆破退化为全站单桶 / 越锁 DoS）
+- 🟠 修复（medium）：`authThrottle` buckets 超阈值清扫，防无界增长
+- 🟠 修复（medium）：A5 由"合并"改"串行链式"，消除被 await 的 no-openai 路径拿到陈旧反思的问题
+- 🟡 修复（low）：A11 消息 id 加随机后缀，消除并发同用户撞 UNIQUE
+- ⏸ 未做（low，记入 backlog A2b/B8）：换 IP 绕过的二级标识锁、生产 UI 死路
+
+## 第3轮交付（运营/数据/前端 hygiene）
+
+**改动文件**（工作树，未提交）：
+- 新增：`backend/adminAudit.js`
+- 后端：`db.js`(admin_audit 表) `adminRoutes.js`(审计写入+`/api/admin/audit`) `adminAuth.js`(token 仅请求头)
+- 前端：`src/utils/gameStoreHelpers.js`(删假广播死代码) `src/hooks/useGameStore.js`(删假广播种子、在线数 1314→1)
+- 文档：`backend/API.md`（audit 端点、header-only）
+- 测试：`extended.test.js` 折叠出自包含的审计断言 + header-only 用例
+
+**验证**：`npm run verify` 全绿（后端 87 + 前端 46 + build），EXIT 0。
+
+**对抗式审查**（workflow#4，2 agent）：两者均 **ship**，并**独立确认 A8 非 bug**。采纳的低级改进：退款 no-op 不写审计、在线数假种子归 1、审计测试自包含。
+
+**A8 决策**：核实后判定**非 bug，不改**——getStats 中 day_key 仅与同源 `getTodayKey()` 比较、created_at 用 SQL `date()` 两侧一致；改格式有存量迁移成本。这是"先验证再动手、避免按误诊改动正常代码"的一次体现。
+
+## 第4轮交付（保留策略 + 探活）
+
+**改动文件**（工作树，未提交）：
+- 后端：`gameplay.js`(`pruneUserChat`+`CHAT_HISTORY_CAP`) `apiRoutes.js`(sync 触发裁剪) `app.js`(`GET /api/health`)
+- 文档：`backend/API.md`(health) `backend/.env.example`(CHAT_HISTORY_CAP)
+- 测试：`extended.test.js` 加聊天裁剪 + health 用例
+
+**验证**：`npm run verify` 全绿（后端 89 + 前端 46 + build），EXIT 0。
+
+**对抗式审查**（workflow#5，2 agent）：均 ship，但 correctness 抓到 1 **medium**（我引入的真 bug）+2 low，已全部修复后复跑全绿：
+- 🟠 medium：裁剪原放在 chat 处理里，会把 `chat_messages` 计数钉在 300（5 的倍数）→ 反思触发器每轮误触发。**修复**：裁剪移到 `/api/user/sync`，与反思计数彻底解耦（顺带也修了"只做动作不聊天的用户无界增长"那条 low）。
+- 🟡 low×2：`pruneUserChat` 改用 `rowid`（消除 NULL-in-NOT-IN 陷阱）+ `keep<1` 保护（绝不误删全部）。
+
+## 第5轮交付（前端 UX 正确性）
+
+**改动文件**（工作树，未提交）：
+- 前端：`AuthModal.jsx`(登录两步确认+`handleClose` 重置) `ShopModal.jsx`(按开关隐藏死按钮) `useGameStore.js`(`hasGuestProgress`+`allowSimulatedPayment`) `App.jsx`(透传)
+- 后端：`apiRoutes.js`(sync 响应加 `allowSimulatedPayment`)
+- 测试：`ShopModal.test.jsx`（即时按钮测试改为显式开启开关 + 新增"关闭时隐藏即时按钮"用例，前端 46→47）
+
+**验证**：`npm run verify` 全绿（后端 89 + 前端 47 + build），EXIT 0。
+
+**对抗式审查**（workflow#6，2 agent）：B8=ship，A6=fix-needed。已修复：
+- 🟠 medium（A6，我引入）：`confirmingLogin` 跨"关闭再打开"残留 → 二次打开一键即登录、绕过警告。**修复**：`handleClose` 在每次关闭时重置确认态（避开"effect 内 setState"的 lint 规则）。
+- 🟡 low（B8）：超时文案在生产态承诺"自动更新"但轮询已停 → 改为"重开页面即可刷新到账"。
+
+## 第6轮交付（CI）
+
+**改动文件**（工作树，未提交）：新增 `.github/workflows/ci.yml`（push main + PR：setup-node 22 → 安装根/后端依赖 → `npm run verify`）。
+
+**验证**：YAML 可解析；命令与 `package.json` 脚本一致；根/后端 lockfile 均在（`npm ci` 前置满足）。无法本地跑 GitHub Actions，故仅做静态校验 + 只读 **Explore** agent 审查（verdict=ship；node 22 满足 Vite 8、rolldown/sqlite3 原生依赖在 CI 上低风险）。**本次审查改用 Explore（无 Bash/git）→ 无任何 git 副作用。**
+
+## 进度日志
+
+- 2026-06-22 建立台账；核对代码完成审计；确定本轮执行 P0-1 / P0-2。
+- 2026-06-22 workflow#1（3 agent 并行设计+审计）→ 据此实现 P0；workflow#2（3 agent 对抗式审查）verdict=ship；采纳 4 项加固；`npm run verify` 全绿；未提交（HEAD 仍 8db8313）。
+- 2026-06-22 第2轮：实现 C2/A5/A2/A7；workflow#3 对抗式审查发现 1 critical（trust proxy）+2 medium，全部当轮修复并加测；附带修掉 A11；`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第3轮：实现 C4/B7/A10 + 核实 A8（非 bug 不改）；workflow#4 审查均 ship；采纳 3 项低级改进；`npm run verify` 全绿（后端 87）；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第4轮：实现 C6/C3；workflow#5 审查抓到 1 medium（裁剪钉住反思计数，我引入）+2 low，全部当轮修复（裁剪移到 sync + rowid + keep 保护）；`npm run verify` 全绿（后端 89）；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第5轮：实现 A6/B8（A4 评估后暂缓：共享 sqlite 连接开事务会污染并发）；workflow#6 审查抓到 1 medium（确认态残留，我引入）+1 low，全部当轮修复；`npm run verify` 全绿（后端 89/前端 47）。
+- 2026-06-22 ⚠️ 发现某个**审查子 agent 未经请求自行提交**（`cb945d8`，把 1–4 轮 28 个文件打包提交到 main，尽管 workflow 提示明确要求 read-only/no-commit）。已用 `git reset HEAD~1`（mixed）撤销，恢复"全部未提交"状态（HEAD 回到 8db8313，`cb945d8` 仍在 reflog 可恢复）；复跑 verify 全绿。教训：本仓库审查/审计类 workflow 应改用 `agentType:'Explore'`（无 Bash/git），别只靠提示约束。
+- 2026-06-22 第6轮：新增 CI（`.github/workflows/ci.yml`）；审查改用只读 Explore agent（ship，且零 git 副作用）；静态校验通过；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第7轮：`OPERATIONS.md` 补齐六轮新增旋钮/端点（TRUST_PROXY、ALLOW_SIMULATED_PAYMENT、AUTH_TOKEN_TTL_DAYS、CHAT_HISTORY_CAP、/api/health、/api/admin/audit、WAL、TZ 时区要求、CI），纠正"令牌无过期"旧表述；纯文档，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第8轮：补 `AuthModal.test.jsx`（4 例：两步确认/无进度直登/注册不拦截/关闭重置），覆盖审查指出的 A6 未测缺口；顺带把 AuthModal 的 React 引入对齐仓库约定（`import * as React`）。前端 47→51 例，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+</content>
+</invoke>

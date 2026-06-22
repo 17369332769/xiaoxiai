@@ -12,6 +12,40 @@ export function getTodayKey() {
   return new Date().toLocaleDateString('zh-CN');
 }
 
+// Per-user chat history cap so chat_messages can't grow without bound.
+// Configurable via CHAT_HISTORY_CAP; invalid/missing falls back to the default.
+const DEFAULT_CHAT_HISTORY_CAP = 300;
+export const CHAT_HISTORY_CAP = (() => {
+  const parsed = parseInt(process.env.CHAT_HISTORY_CAP, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CHAT_HISTORY_CAP;
+})();
+
+// Keep only the newest `keep` chat rows for a user (sync renders the last 40 and
+// reflection reads the last 15, so the default leaves ample headroom). Called on
+// /api/user/sync — NOT in the chat path, so it can't interfere with the
+// "every 5th message" reflection trigger that counts chat_messages. Pruning all
+// message types here also bounds growth for users who only take actions and
+// never chat. Returns the number of pruned rows.
+export async function pruneUserChat(userId, keep = CHAT_HISTORY_CAP) {
+  // Fail safe: never interpret a non-positive cap as "delete everything".
+  if (!Number.isFinite(keep) || keep < 1) {
+    return 0;
+  }
+  // Filter by rowid (never NULL) rather than the TEXT id, avoiding the
+  // NULL-in-NOT-IN pitfall entirely.
+  const result = await dbRun(
+    `DELETE FROM chat_messages
+     WHERE user_id = ? AND rowid NOT IN (
+       SELECT rowid FROM chat_messages
+       WHERE user_id = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT ?
+     )`,
+    [userId, userId, keep]
+  );
+  return result.changes;
+}
+
 export function formatTasks(tasks) {
   return tasks.map((task) => ({
     ...task,

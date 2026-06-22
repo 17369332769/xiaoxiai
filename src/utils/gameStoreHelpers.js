@@ -1,10 +1,3 @@
-const SIMULATED_NAMES = ['萌萌哒小野猫', '星空下的漫步者', '夏日微风', '代码搬运工', '爱希一万年', '云端男友', '泡泡糖', '橘子汽水', '青衫折扇', '微光'];
-const SIMULATED_GIFTS = ['香浓拿铁 ☕', '红丝绒蛋糕 🍰', '水晶玫瑰 🌹', '流星项链 💖', '爱心便当 🍱', '真爱誓约戒指 💍'];
-
-function randomArrayItem(items) {
-  return items[Math.floor(Math.random() * items.length)];
-}
-
 export function getOrCreateUserId(storage = localStorage) {
   let id = storage.getItem('xxa_user_id');
   if (!id) {
@@ -88,19 +81,6 @@ export function appendServerMessages(history, primaryMessages, systemMessages = 
 
 export function trimRecentEvents(history, eventText, limit = 10) {
   return [eventText, ...history].slice(0, limit);
-}
-
-export function createSimulatedRecentEvent() {
-  const name = randomArrayItem(SIMULATED_NAMES);
-  const gift = randomArrayItem(SIMULATED_GIFTS);
-  const isTip = Math.random() > 0.6;
-
-  if (isTip) {
-    const amount = randomArrayItem([5, 52, 131.4]);
-    return `玩家「${name}」刚刚打赏了小希 ¥${amount} 元！小希比心感谢~ 💖`;
-  }
-
-  return `玩家「${name}」刚刚在商店买下了 [${gift}] 送给小希！`;
 }
 
 export function applyUserSnapshot(snapshot, setters) {

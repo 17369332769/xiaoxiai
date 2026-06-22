@@ -6,7 +6,23 @@
 http://localhost:3000
 ```
 
-所有接口当前均为 `POST`，请求体为 JSON。
+业务接口均为 `POST`，请求体为 JSON。唯一例外是健康检查：
+
+## GET /api/health
+
+负载均衡 / 探活用。检查数据库连通性，无需鉴权，且不计入限流。
+
+- 正常：`200 { "ok": true, "db": "up" }`
+- 数据库不可用：`503 { "ok": false, "db": "down" }`
+
+## Authentication（鉴权）
+
+业务接口（`/api/user`、`/api/chat`、`/api/action/*`、`/api/task`、`/api/checkin`、`/api/transactions`、`/api/order/*`、`/api/memory/*`、`/api/analytics/track`、`/api/presence`）通过中间件解析请求用户：
+
+- 携带 `Authorization: Bearer <token>`（来自 `/api/auth/login`、`/api/auth/register`）时，以令牌中的 `userId` 为准，忽略请求体的 `userId`。
+- 未携带（或令牌失效）时，回退到请求体 `userId`；若该 `userId` 已绑定正式账号，返回 `401 AUTH_REQUIRED`（必须登录）；未绑定的游客身份照常放行。
+
+不需要鉴权的公开/特殊接口：`/api/auth/*`、`/api/payment/callback`（由支付网关以 HMAC 签名认证）、`/api/broadcasts`（只读公开 feed）、`/api/admin/*`（改用 `x-admin-token`）。
 
 ## Response Contract
 
@@ -36,6 +52,8 @@ http://localhost:3000
 | --- | --- |
 | `INVALID_JSON` | 请求体不是合法 JSON |
 | `INVALID_USER_ID` | `userId` 缺失或格式不合法 |
+| `AUTH_REQUIRED` | 该身份已绑定账号，但未提供有效令牌 |
+| `TIP_SIMULATION_DISABLED` | 即时模拟打赏已停用（`ALLOW_SIMULATED_PAYMENT` 未开启），请走正式支付 |
 | `INVALID_TEXT` | 聊天文本为空或缺失 |
 | `TEXT_TOO_LONG` | 聊天文本超过 500 字符 |
 | `CONTENT_BLOCKED` | 聊天文本命中内容安全过滤 |
@@ -58,6 +76,7 @@ http://localhost:3000
 | `ACCOUNT_EXISTS` | 账号标识已被注册 |
 | `USER_ALREADY_BOUND` | 当前游客身份已绑定账号 |
 | `INVALID_LOGIN` | 账号或密码不正确 |
+| `TOO_MANY_ATTEMPTS` | 登录失败次数过多，已临时锁定 |
 | `MEMORY_NOT_FOUND` | 指定记忆不存在 |
 | `INVALID_EVENT` | 埋点事件类型不在白名单内 |
 | `ADMIN_DISABLED` | 未配置 `ADMIN_TOKEN`，后台已禁用 |
@@ -260,7 +279,7 @@ http://localhost:3000
 - `tasks`
 - `systemMessages`
 
-说明：`/api/action/tip` 是“即时模拟支付”快捷通道：服务端会创建一笔真实订单并立即结算（幂等发币），同时发放打赏专属的好感/心情/体力奖励。若需要演示完整的“下单→扫码→回调验签→发币”流程，请使用下面的 `/api/order/*` 与 `/api/payment/callback`。
+说明：`/api/action/tip` 是“即时模拟支付”快捷通道：仅当 `ALLOW_SIMULATED_PAYMENT=true`（默认关闭）时，服务端才会创建一笔真实订单并立即结算（幂等发币），同时发放打赏专属的好感/心情/体力奖励；开关关闭时直接返回 `403 TIP_SIMULATION_DISABLED`。生产环境应保持关闭，改走下面的 `/api/order/*` 与 `/api/payment/callback` 正式流程。
 
 ## POST /api/transactions
 
@@ -303,7 +322,7 @@ http://localhost:3000
 - `order`：`{ id, outTradeNo, amount, coins, paymentMethod, status }`，`status` 为 `pending`
 - `coins`：到账后将增加的爱心币
 - `qrContent`：示意用二维码内容字符串
-- `simulatedCallback`：一份**已签名**的模拟网关回调体（真实环境由支付网关服务端回调；演示时由前端回放）
+- `simulatedCallback`：一份**已签名**的模拟网关回调体，**仅当 `ALLOW_SIMULATED_PAYMENT=true` 时返回**（演示用，由前端回放）。生产环境（开关关闭）不会返回此字段——只有持有 `PAYMENT_SECRET` 的真实网关才能产生有效签名结算，客户端无法自助发币
 
 ### POST /api/payment/callback
 
@@ -331,7 +350,7 @@ http://localhost:3000
 - `POST /api/auth/login`：`{ identifier, password }`。响应 `{ token, account }`，`account.userId` 为可用于跨设备同步的规范用户 ID。
 - `POST /api/auth/bind`：同 register，用于给已在游玩的游客补绑账号。
 
-`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名。
+`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）。`/api/auth/login` 对同一 标识+IP 的连续失败做锁定（默认 5 次失败后短时锁定，返回 `TOO_MANY_ATTEMPTS`）。
 
 ## Community（真实在线人数 / 广播）
 
@@ -354,7 +373,7 @@ http://localhost:3000
 
 ## Admin（运营后台，需 `x-admin-token` 头）
 
-所有 `/api/admin/*` 接口需在请求头携带 `x-admin-token: <ADMIN_TOKEN>`；未配置 `ADMIN_TOKEN` 时返回 `ADMIN_DISABLED`。
+所有 `/api/admin/*` 接口需在请求头携带 `x-admin-token: <ADMIN_TOKEN>`（仅接受请求头，不再接受请求体内的 `adminToken`，避免随日志泄露）；未配置 `ADMIN_TOKEN` 时返回 `ADMIN_DISABLED`。
 
 - `POST /api/admin/stats`：运营指标（总用户、新增、DAU、留存、付费用户、付费转化、营收、ARPPU、关键事件计数、当前在线）。
 - `POST /api/admin/users` / `orders` / `events` / `broadcasts`：分页查看（`{ limit }`）。
@@ -362,6 +381,7 @@ http://localhost:3000
 - `POST /api/admin/announcement/deactivate`：`{ id }` 下架公告。
 - `POST /api/admin/order/refund`：`{ orderId }` 对已支付订单退款（幂等，扣回爱心币）。
 - `POST /api/admin/config`：只读返回当前商品 / 礼物 / 打赏档位 / 任务配置。
+- `POST /api/admin/audit`：`{ limit }` 查看管理操作审计日志（退款 / 公告发布 / 公告下架等，含动作、目标、IP、时间）。
 
 配套静态后台页面：`/admin.html`。
 

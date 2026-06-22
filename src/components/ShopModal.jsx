@@ -20,6 +20,7 @@ export default function ShopModal({
   createOrder,
   queryOrder,
   confirmPayment,
+  allowSimulatedPayment = false,
   activePurchaseKey,
   isTipping = false,
   lastFailedAction,
@@ -414,32 +415,38 @@ export default function ShopModal({
                     </div>
                     <div>{selectedTip.desc}</div>
                     <div style={{ fontSize: '11px', color: 'var(--primary-pink)', marginTop: '4px' }}>
-                      【模拟支付】扫码或直接点击下方按钮完成
+                      {allowSimulatedPayment
+                        ? '【模拟支付】扫码或直接点击下方按钮完成'
+                        : '扫码完成支付，或点击下方按钮创建订单'}
                     </div>
                   </div>
 
-                  {/* Action Button (instant settle shortcut, kept for compatibility) */}
-                  <button
-                    onClick={handleMockPay}
-                    disabled={isModalBusy}
-                    className="btn-primary payment-status-sim"
-                    style={{
-                      padding: '10px',
-                      width: '100%',
-                      fontSize: '14px',
-                      background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
-                      boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
-                    }}
-                  >
-                    {(isProcessing || isTipping) ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
-                  </button>
+                  {/* Instant-settle shortcut — demo only. Hidden when simulated
+                      payment is off, since /api/action/tip would return 403. */}
+                  {allowSimulatedPayment && (
+                    <button
+                      onClick={handleMockPay}
+                      disabled={isModalBusy}
+                      className="btn-primary payment-status-sim"
+                      style={{
+                        padding: '10px',
+                        width: '100%',
+                        fontSize: '14px',
+                        background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
+                        boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
+                      }}
+                    >
+                      {(isProcessing || isTipping) ? '🔄 正在建立安全加密链接...' : `点击确认支付 ¥${selectedTip.amount} 元`}
+                    </button>
+                  )}
 
-                  {/* Real scan-to-pay entry: drives the actual order链路 */}
+                  {/* Real scan-to-pay entry: drives the actual order链路. Primary
+                      style when it is the only available payment path. */}
                   <button
                     onClick={handleStartRealPayment}
                     disabled={isModalBusy}
-                    className="btn-secondary"
-                    style={{ padding: '10px', width: '100%', fontSize: '13px', marginTop: '10px' }}
+                    className={allowSimulatedPayment ? 'btn-secondary' : 'btn-primary'}
+                    style={{ padding: '10px', width: '100%', fontSize: '13px', marginTop: allowSimulatedPayment ? '10px' : '0' }}
                   >
                     {isCreatingOrder ? '正在生成订单...' : '📷 真实扫码支付 (创建订单)'}
                   </button>
@@ -477,25 +484,32 @@ export default function ShopModal({
                     {orderStatus === 'paid'
                       ? '✅ 已检测到支付成功，正在到账...'
                       : orderStatus === 'timeout'
-                        ? '⏱️ 查询超时，如已支付请点击下方按钮确认。'
-                        : '🔄 正在等待支付结果...'}
+                        ? (activeOrder.simulatedCallback
+                          ? '⏱️ 查询超时，如已支付请点击下方按钮确认。'
+                          : '⏱️ 查询超时，如已完成支付，重新打开本页面即可刷新到账。')
+                        : '🔄 正在等待支付结果，到账后会自动更新...'}
                   </div>
                 </div>
 
-                <button
-                  onClick={handleConfirmRealPayment}
-                  disabled={isConfirmingPayment}
-                  className="btn-primary payment-status-sim"
-                  style={{
-                    padding: '10px',
-                    width: '100%',
-                    fontSize: '14px',
-                    background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
-                    boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
-                  }}
-                >
-                  {isConfirmingPayment ? '正在确认到账...' : '我已完成支付'}
-                </button>
+                {/* Manual confirm replays the pre-signed callback — only possible
+                    in demo mode. With a real gateway, the poll above detects
+                    settlement automatically, so this button is hidden. */}
+                {activeOrder.simulatedCallback && (
+                  <button
+                    onClick={handleConfirmRealPayment}
+                    disabled={isConfirmingPayment}
+                    className="btn-primary payment-status-sim"
+                    style={{
+                      padding: '10px',
+                      width: '100%',
+                      fontSize: '14px',
+                      background: payChannel === 'wechat' ? '#22c55e' : '#3b82f6',
+                      boxShadow: payChannel === 'wechat' ? '0 0 10px rgba(34,197,94,0.3)' : '0 0 10px rgba(59,130,246,0.3)'
+                    }}
+                  >
+                    {isConfirmingPayment ? '正在确认到账...' : '我已完成支付'}
+                  </button>
+                )}
 
                 <button
                   onClick={stopScanFlow}

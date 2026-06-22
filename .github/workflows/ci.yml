@@ -1,0 +1,38 @@
+name: CI
+
+# Runs the full pre-release check (secrets scan, lint, frontend + backend tests,
+# build) on every push to main and on every PR, so regressions are caught before
+# merge. Mirrors `npm run verify` exactly.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node 22 satisfies Vite 8's >=22.12 requirement (the local sandbox pins an
+      # older glibc-compatible build, but CI runners are unconstrained).
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      # check:secrets + lint + frontend vitest + backend node:test + vite build.
+      - name: Verify
+        run: npm run verify

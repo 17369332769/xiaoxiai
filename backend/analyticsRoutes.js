@@ -1,6 +1,6 @@
 import { dbGet } from './db.js';
 import { AppError } from './appError.js';
-import { asyncHandler, sanitizeUserId, sendJson } from './httpUtils.js';
+import { asyncHandler, sendJson } from './httpUtils.js';
 import { recordEvent } from './analytics.js';
 
 const ALLOWED_CLIENT_EVENTS = new Set([
@@ -15,9 +15,11 @@ const ALLOWED_CLIENT_EVENTS = new Set([
 
 // Lightweight client-side behavior beacon. Only a whitelist of UI events is
 // accepted so the table can't be flooded with arbitrary types.
-export function registerAnalyticsRoutes(app) {
+export function registerAnalyticsRoutes(app, { resolveUser }) {
+  app.use('/api/analytics', resolveUser);
+
   app.post('/api/analytics/track', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const type = String(req.body?.type || '');
     if (!ALLOWED_CLIENT_EVENTS.has(type)) {
       throw new AppError(400, 'INVALID_EVENT', 'Unknown analytics event type');

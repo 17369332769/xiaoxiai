@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import * as React from 'react';
+
+const { useState } = React;
 
 export default function AuthModal({
   isOpen,
   onClose,
   account,
   authPending = false,
+  hasGuestProgress = false,
   registerAccount,
   loginAccount,
   logoutAccount,
@@ -13,13 +16,40 @@ export default function AuthModal({
   const [tab, setTab] = useState('login'); // 'login' or 'register'
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  // Two-step confirm before a login discards in-progress guest data (A6).
+  const [confirmingLogin, setConfirmingLogin] = useState(false);
 
   if (!isOpen) return null;
+
+  // The modal is never unmounted (isOpen only short-circuits render), so closing
+  // it must clear the armed confirm — otherwise reopening would let a single
+  // click log in and skip the warning. All closes route through here.
+  const handleClose = () => {
+    setConfirmingLogin(false);
+    onClose?.();
+  };
+
+  // Logging in switches to the account's own profile; an unbound guest with
+  // progress would otherwise lose it silently. Register binds the current
+  // progress, so it never needs this warning.
+  const needsLoginConfirm = tab === 'login' && !account?.bound && hasGuestProgress;
+
+  const switchTab = (next) => {
+    setTab(next);
+    setConfirmingLogin(false);
+  };
 
   const handleSubmit = async () => {
     if (authPending) return;
     if (!identifier.trim() || !password) {
       notify?.('请输入账号和密码', 'warning', '信息不完整');
+      return;
+    }
+
+    // First click on a risky login only asks for confirmation; the second
+    // (button now relabeled) actually logs in.
+    if (needsLoginConfirm && !confirmingLogin) {
+      setConfirmingLogin(true);
       return;
     }
 
@@ -32,6 +62,7 @@ export default function AuthModal({
         tab === 'login' ? '欢迎回来' : '绑定成功'
       );
       setPassword('');
+      setConfirmingLogin(false);
       onClose();
     }
   };
@@ -45,11 +76,11 @@ export default function AuthModal({
   });
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={handleClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
         <div className="modal-header">
           <div className="modal-title"><span>👤</span><span>账号中心 (Account)</span></div>
-          <button className="close-btn" onClick={onClose}>&times;</button>
+          <button className="close-btn" onClick={handleClose}>&times;</button>
         </div>
 
         {account?.bound ? (
@@ -75,10 +106,10 @@ export default function AuthModal({
         ) : (
           <div>
             <div className="auth-tab-row">
-              <button className="btn-secondary" style={tabButtonStyle(tab === 'login')} onClick={() => setTab('login')} disabled={authPending}>
+              <button className="btn-secondary" style={tabButtonStyle(tab === 'login')} onClick={() => switchTab('login')} disabled={authPending}>
                 登录
               </button>
-              <button className="btn-secondary" style={tabButtonStyle(tab === 'register')} onClick={() => setTab('register')} disabled={authPending}>
+              <button className="btn-secondary" style={tabButtonStyle(tab === 'register')} onClick={() => switchTab('register')} disabled={authPending}>
                 注册并绑定
               </button>
             </div>
@@ -112,13 +143,23 @@ export default function AuthModal({
               </div>
             )}
 
+            {needsLoginConfirm && confirmingLogin && (
+              <div style={{ fontSize: '12px', color: 'var(--accent-gold)', marginBottom: '12px', lineHeight: 1.5 }}>
+                ⚠️ 你当前的游客进度（等级 / 好感度 / 爱心币）不会合并到要登录的账号。如果想保留当前进度，请改用「注册并绑定」。确认登录吗？
+              </div>
+            )}
+
             <button
               className="btn-primary"
               style={{ width: '100%', padding: '11px', fontSize: '14px' }}
               onClick={handleSubmit}
               disabled={authPending}
             >
-              {authPending ? '处理中...' : (tab === 'login' ? '登录' : '注册并绑定当前进度')}
+              {authPending
+                ? '处理中...'
+                : tab === 'register'
+                  ? '注册并绑定当前进度'
+                  : (needsLoginConfirm && confirmingLogin ? '确认登录（放弃当前进度）' : '登录')}
             </button>
           </div>
         )}

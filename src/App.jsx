@@ -170,6 +170,7 @@ function App() {
         createOrder={store.createOrder}
         queryOrder={store.queryOrder}
         confirmPayment={store.confirmPayment}
+        allowSimulatedPayment={store.allowSimulatedPayment}
         activePurchaseKey={store.activePurchaseKey}
         isTipping={store.isTipping}
         lastFailedAction={store.lastFailedAction}
@@ -193,6 +194,7 @@ function App() {
         onClose={() => setIsAuthOpen(false)}
         account={store.account}
         authPending={store.authPending}
+        hasGuestProgress={store.hasGuestProgress}
         registerAccount={store.registerAccount}
         loginAccount={store.loginAccount}
         logoutAccount={store.logoutAccount}

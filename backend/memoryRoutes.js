@@ -1,13 +1,15 @@
 import { dbGet } from './db.js';
 import { AppError } from './appError.js';
-import { asyncHandler, sanitizeUserId, sendJson } from './httpUtils.js';
+import { asyncHandler, sendJson } from './httpUtils.js';
 import { clearMemories, deleteMemory, listMemories } from './memoryStore.js';
 
 // Lets a user inspect and prune the long-term memories Xiaoxi keeps about them
 // (manual cleanup + transparency for the memory system).
-export function registerMemoryRoutes(app) {
+export function registerMemoryRoutes(app, { resolveUser }) {
+  app.use(['/api/memory'], resolveUser);
+
   app.post('/api/memory/list', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const user = await dbGet('SELECT id, summary FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 
@@ -16,7 +18,7 @@ export function registerMemoryRoutes(app) {
   }));
 
   app.post('/api/memory/delete', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
     if (!key) throw new AppError(400, 'INVALID_PARAMETER', 'memory key is required');
 
@@ -31,7 +33,7 @@ export function registerMemoryRoutes(app) {
   }));
 
   app.post('/api/memory/clear', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const user = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 

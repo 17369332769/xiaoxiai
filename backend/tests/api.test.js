@@ -9,6 +9,9 @@ process.env.ALLOWED_ORIGIN = 'http://localhost:5173';
 process.env.RATE_LIMIT_MAX_REQUESTS = '1000';
 process.env.LOG_LEVEL = 'error';
 process.env.LOG_REQUESTS = 'false';
+// These tests assert the demo instant-tip behavior, so enable the simulated
+// payment path (it is off by default for production safety).
+process.env.ALLOW_SIMULATED_PAYMENT = 'true';
 
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-api-test-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');

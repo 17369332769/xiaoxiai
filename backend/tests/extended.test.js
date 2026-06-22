@@ -12,6 +12,8 @@ process.env.LOG_REQUESTS = 'false';
 process.env.PAYMENT_SECRET = 'test-payment-secret';
 process.env.AUTH_SECRET = 'test-auth-secret';
 process.env.ADMIN_TOKEN = 'test-admin-token';
+// Order/payment + instant-tip tests below assert the demo simulated-payment flow.
+process.env.ALLOW_SIMULATED_PAYMENT = 'true';
 
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-ext-test-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
@@ -267,6 +269,100 @@ test('account register validates identifier and password', async () => {
   assert.equal(shortPw.body.error.code, 'INVALID_PASSWORD');
 });
 
+test('login throttle locks out after repeated failures for the same identifier', async () => {
+  const guestId = 'brute_guest';
+  await postJson('/api/user/sync', { userId: guestId });
+  await postJson('/api/auth/register', { userId: guestId, identifier: 'brute@example.com', password: 'secret123' });
+
+  // Five wrong-password attempts are rejected as invalid credentials...
+  for (let i = 0; i < 5; i += 1) {
+    const wrong = await postJson('/api/auth/login', { identifier: 'brute@example.com', password: 'wrongpw' });
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.body.error.code, 'INVALID_LOGIN');
+  }
+  // ...the next attempt is locked out — even with the CORRECT password.
+  const locked = await postJson('/api/auth/login', { identifier: 'brute@example.com', password: 'secret123' });
+  assert.equal(locked.status, 429);
+  assert.equal(locked.body.error.code, 'TOO_MANY_ATTEMPTS');
+});
+
+test('issued tokens carry an expiry that verifyToken enforces', () => {
+  const secret = process.env.AUTH_SECRET;
+  const fresh = accounts.issueToken({ accountId: 'a1', userId: 'tok_user' }, secret);
+  assert.equal(accounts.verifyToken(fresh, secret)?.userId, 'tok_user');
+
+  // A token whose exp is already in the past must be rejected.
+  const expired = accounts.issueToken({ accountId: 'a1', userId: 'tok_user' }, secret, -1000);
+  assert.equal(accounts.verifyToken(expired, secret), null);
+});
+
+// ---------- auth enforcement (resolveUser) ----------
+
+test('a bound account cannot be operated via body userId without a token', async () => {
+  const guestId = 'authz_guest_1';
+  await postJson('/api/user/sync', { userId: guestId });
+  const register = await postJson('/api/auth/register', {
+    userId: guestId,
+    identifier: 'authz1@example.com',
+    password: 'secret123',
+  });
+  assert.equal(register.status, 200);
+  const token = register.body.token;
+
+  // No token: the now-bound id is rejected (this is the account-takeover hole).
+  const noToken = await postJson('/api/transactions', { userId: guestId });
+  assert.equal(noToken.status, 401);
+  assert.equal(noToken.body.error.code, 'AUTH_REQUIRED');
+
+  // With the token the same operation succeeds.
+  const withToken = await postJson('/api/transactions', { userId: guestId }, { Authorization: `Bearer ${token}` });
+  assert.equal(withToken.status, 200);
+  assert.equal(withToken.body.ok, true);
+});
+
+test('a valid token is authoritative over a spoofed body userId', async () => {
+  const guestId = 'authz_guest_2';
+  await postJson('/api/user/sync', { userId: guestId });
+  const register = await postJson('/api/auth/register', {
+    userId: guestId,
+    identifier: 'authz2@example.com',
+    password: 'secret123',
+  });
+  const token = register.body.token;
+
+  // The body claims a different victim id, but the token's userId must win, so
+  // the coffee is charged to the token's account — never the victim.
+  const victimId = 'authz_victim_2';
+  await postJson('/api/user/sync', { userId: victimId });
+  const feed = await postJson(
+    '/api/action/feed',
+    { userId: victimId, foodId: 'coffee' },
+    { Authorization: `Bearer ${token}` }
+  );
+  assert.equal(feed.status, 200);
+
+  const ownLedger = await postJson('/api/transactions', { userId: guestId }, { Authorization: `Bearer ${token}` });
+  assert.ok(ownLedger.body.transactions.some((t) => t.category === 'feed'));
+
+  const victimLedger = await postJson('/api/transactions', { userId: victimId });
+  assert.equal(victimLedger.status, 200);
+  assert.equal(victimLedger.body.transactions.filter((t) => t.category === 'feed').length, 0);
+});
+
+test('an unbound guest id and an invalid token both resolve to guest play', async () => {
+  const pureGuest = await postJson('/api/user/sync', { userId: 'authz_pure_guest' });
+  assert.equal(pureGuest.status, 200);
+  assert.equal(pureGuest.body.ok, true);
+
+  const badToken = await postJson(
+    '/api/user/sync',
+    { userId: 'authz_badtoken_guest' },
+    { Authorization: 'Bearer not-a-real-token' }
+  );
+  assert.equal(badToken.status, 200);
+  assert.equal(badToken.body.ok, true);
+});
+
 // ---------- presence + broadcasts ----------
 
 test('presence returns a real online count and the broadcast feed', async () => {
@@ -372,4 +468,52 @@ test('admin can publish an announcement and refund a paid order', async () => {
 
   const afterRefund = (await postJson('/api/user/sync', { userId })).body.user.coins;
   assert.equal(afterRefund, coinsAfterTip - 100);
+
+  // Both admin mutations performed in THIS test must appear in the audit log
+  // (self-contained — does not depend on any other test's ordering).
+  const audit = await postJson('/api/admin/audit', {}, headers);
+  assert.equal(audit.status, 200);
+  assert.equal(Array.isArray(audit.body.audit), true);
+  const actions = audit.body.audit.map((row) => row.action);
+  assert.ok(actions.includes('announcement_publish'), 'announcement is audited');
+  const refundRow = audit.body.audit.find((row) => row.action === 'order_refund' && row.targetId === orderId);
+  assert.ok(refundRow, 'this refund is audited with its order id');
+  assert.equal(refundRow.targetType, 'order');
+  assert.ok(refundRow.createdAt);
+});
+
+test('admin token supplied in the body is rejected (header-only)', async () => {
+  const viaBody = await postJson('/api/admin/stats', { adminToken: 'test-admin-token' });
+  assert.equal(viaBody.status, 403);
+  assert.equal(viaBody.body.error.code, 'ADMIN_FORBIDDEN');
+});
+
+// ---------- reliability / ops ----------
+
+test('chat history is pruned to the retention cap, keeping the newest', async () => {
+  const userId = 'chat_prune_user';
+  await postJson('/api/user/sync', { userId });
+  for (let i = 0; i < 6; i += 1) {
+    await dbRun(
+      'INSERT INTO chat_messages (id, user_id, sender, text) VALUES (?, ?, "user", ?)',
+      [`prune-${i}`, userId, `msg ${i}`]
+    );
+  }
+
+  const removed = await gameplay.pruneUserChat(userId, 3);
+  assert.ok(removed >= 1);
+
+  const rows = await dbModule.dbAll('SELECT id FROM chat_messages WHERE user_id = ?', [userId]);
+  assert.equal(rows.length, 3);
+  // The 3 survivors are the newest (highest rowid) rows.
+  assert.ok(rows.some((r) => r.id === 'prune-5'));
+  assert.ok(!rows.some((r) => r.id === 'prune-0'));
+});
+
+test('health endpoint reports DB connectivity without auth or CORS origin', async () => {
+  const response = await fetch(`${baseUrl}/api/health`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.db, 'up');
 });

@@ -98,6 +98,14 @@ async function runColumnMigrations() {
 // Create tables if they do not exist
 async function initializeTables() {
   try {
+    // Reliability PRAGMAs (set once on the single connection, before any DDL):
+    // - WAL lets readers and a writer proceed concurrently instead of blocking.
+    // - busy_timeout makes a contended write wait-and-retry instead of throwing
+    //   SQLITE_BUSY (which previously surfaced as 500s, e.g. when the background
+    //   memory-reflection write collided with a request write).
+    await dbRun('PRAGMA journal_mode = WAL');
+    await dbRun('PRAGMA busy_timeout = 5000');
+
     // 1. Users Table
     await dbRun(`
       CREATE TABLE IF NOT EXISTS users (
@@ -255,6 +263,20 @@ async function initializeTables() {
     // a DB that already has the OLD non-unique idx_accounts_user it would silently
     // no-op. Detect that case and upgrade the index (after de-duplicating).
     await ensureUniqueAccountUserIndex();
+
+    // 11. Admin Audit Log (append-only trail of operator mutations)
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS admin_audit (
+        id TEXT PRIMARY KEY,
+        action TEXT,
+        target_type TEXT,
+        target_id TEXT,
+        detail TEXT,
+        ip TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await dbRun('CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at)');
 
     await runColumnMigrations();
 

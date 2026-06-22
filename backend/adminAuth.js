@@ -11,7 +11,9 @@ export function createRequireAdmin(adminToken) {
       return;
     }
 
-    const provided = req.get('x-admin-token') || (req.body && req.body.adminToken) || '';
+    // Header-only: accepting the token in the body risks it leaking into request
+    // logs/analytics payloads. Operators must send the x-admin-token header.
+    const provided = req.get('x-admin-token') || '';
     const a = Buffer.from(String(provided));
     const b = Buffer.from(adminToken);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {

@@ -88,6 +88,7 @@ cp backend/.env.example backend/.env
 - `PAYMENT_SECRET`：支付回调签名密钥（HMAC），生产必须覆盖
 - `AUTH_SECRET`：账号登录令牌签名密钥（HMAC），生产必须覆盖
 - `ADMIN_TOKEN`：运营后台令牌；留空则完全禁用后台（`/admin.html` 与 `/api/admin/*`）
+- `ALLOW_SIMULATED_PAYMENT`：仅演示用开关，默认 `false`。为 `true` 时 `/api/action/tip` 不经真实支付即时发币、且 `/api/order/create` 会下发可被客户端回放的已签名回调；**生产必须保持 `false`/不设**，否则等于开放免费刷币
 - `OPENAI_API_KEY`：模型服务 API Key
 - `OPENAI_API_BASE_URL`：兼容 OpenAI SDK 的接口地址
 - `OPENAI_MODEL_NAME`：模型名称，例如 `gpt-4o-mini` 或 `deepseek-chat`
@@ -143,7 +144,7 @@ npm start
 1. 构建前端：`npm run build` 生成 `dist/`（含运营后台页 `admin.html`），由 Nginx 或任意静态服务器托管。
 2. 运行后端：`cd backend && npm start`，建议用 pm2 或 systemd 守护。后端只提供 `/api/*`，默认监听 `127.0.0.1:3000`。
 3. 用 Nginx 反向代理：静态托管 `dist/`，把 `/api` 代理到后端。`admin.html` 已随构建进入 `dist/`，作为静态文件提供即可。
-4. 生产必须覆盖的环境变量：`AUTH_SECRET`、`PAYMENT_SECRET`、`ADMIN_TOKEN`、`ALLOWED_ORIGIN`（指向前端真实域名）；`backend/.env` 不入库。
+4. 生产必须覆盖的环境变量：`AUTH_SECRET`、`PAYMENT_SECRET`、`ADMIN_TOKEN`、`ALLOWED_ORIGIN`（指向前端真实域名）；并确保 `ALLOW_SIMULATED_PAYMENT` 保持 `false`/不设（否则客户端可免费刷币）；`backend/.env` 不入库。
 
 完整的 pm2 / systemd / Nginx 配置示例与数据库备份建议见 [OPERATIONS.md](backend/OPERATIONS.md) 的「Production Deployment」章节。
 
@@ -155,7 +156,7 @@ npm start
 - `POST /api/task/claim`：领取任务奖励
 - `POST /api/action/feed`：喂食小希
 - `POST /api/action/gift`：赠送礼物
-- `POST /api/action/tip`：即时模拟打赏（内部创建并结算真实订单）
+- `POST /api/action/tip`：即时模拟打赏（仅 `ALLOW_SIMULATED_PAYMENT=true` 时即时发币，否则返回 `403`，请改走下方正式支付流程）
 - `POST /api/transactions`：查询爱心币流水（消费记录 / 钱包账单）
 - `POST /api/order/create`、`POST /api/payment/callback`、`POST /api/order/query`：真实支付下单 / 回调验签 / 订单查询
 - `POST /api/auth/register`、`/api/auth/login`、`/api/auth/bind`：账号注册 / 登录 / 绑定
@@ -199,6 +200,7 @@ SQLite 文件位置：
 - 记忆整理依赖外部大模型；未配置 API Key 时不会执行真实记忆提炼，但记忆的上限/优先级与人工清理（查看/删除）始终可用。
 - 每日任务按天重置；成长成就任务长期累计不重置。
 - 运营后台位于 `/admin.html`，需要配置 `ADMIN_TOKEN` 才会启用。
+- 鉴权模型：登录/注册签发的 HMAC 令牌现在会被业务接口校验（前端自动在 `Authorization: Bearer` 头携带）。一旦游客身份绑定了正式账号，该 `userId` 只能凭有效令牌操作，不能再仅凭请求体里的 `userId` 访问（防止越权接管）；未绑定的纯游客身份仍可无令牌游玩。
 
 ## 安全提醒
 

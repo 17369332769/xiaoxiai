@@ -38,6 +38,14 @@ export function validateChoice(value, allowedValues, fieldName) {
   return value;
 }
 
+// Collision-resistant id for chat/system message rows. `prefix-${Date.now()}`
+// alone collides when two inserts land in the same millisecond (seen as
+// SQLITE_CONSTRAINT on chat_messages.id under concurrent same-user requests), so
+// append a short random suffix.
+export function generateId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function sendJson(res, payload) {
   res.json({
     ok: true,

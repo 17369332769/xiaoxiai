@@ -102,6 +102,7 @@ describe('ShopModal', () => {
         feedXiaoxi={vi.fn()}
         giftXiaoxi={vi.fn()}
         tipXiaoxi={tipXiaoxi}
+        allowSimulatedPayment
         notify={notify}
       />
     );
@@ -169,6 +170,31 @@ describe('ShopModal', () => {
 
     fireEvent.click(screen.getByText('重试购买'));
     expect(retryLastFailedAction).toHaveBeenCalled();
+  });
+
+  test('hides the instant-pay button when simulated payment is disabled', () => {
+    render(
+      <ShopModal
+        isOpen
+        mode="tipping"
+        shopType="food"
+        onClose={vi.fn()}
+        coins={0}
+        FOOD_ITEMS={FOOD_ITEMS}
+        GIFT_ITEMS={GIFT_ITEMS}
+        TIPPING_TIERS={TIPPING_TIERS}
+        feedXiaoxi={vi.fn()}
+        giftXiaoxi={vi.fn()}
+        tipXiaoxi={vi.fn()}
+        allowSimulatedPayment={false}
+        notify={vi.fn()}
+      />
+    );
+
+    // The demo instant-settle button is gone (it would 403 in production)...
+    expect(screen.queryByText(/点击确认支付/)).toBeNull();
+    // ...but the real scan-to-pay path is still offered.
+    expect(screen.getByText(/真实扫码支付/)).not.toBeNull();
   });
 
   test('real scan-to-pay flow: creates an order, shows the QR placeholder, then confirms payment', async () => {

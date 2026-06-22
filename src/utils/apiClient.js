@@ -18,9 +18,23 @@ export async function parseApiResponse(response) {
 }
 
 export async function postJson(url, payload, { signal } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+
+  // Attach the account auth token when present so the backend can resolve the
+  // request to the authenticated (bound) user instead of trusting body.userId.
+  let token = null;
+  try {
+    token = localStorage.getItem('xxa_token');
+  } catch {
+    // localStorage may be unavailable (SSR / privacy mode); fall back to guest.
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     signal,
     body: JSON.stringify(payload),
   });

@@ -1,9 +1,13 @@
-import { asyncHandler, sanitizeUserId, sendJson } from './httpUtils.js';
+import { asyncHandler, sendJson } from './httpUtils.js';
 import { loadBroadcasts } from './broadcasts.js';
 
 // Real online presence + real broadcast feed (replaces the old front-end random
 // online count and locally-faked ticker).
-export function registerCommunityRoutes(app, { presence }) {
+export function registerCommunityRoutes(app, { presence, resolveUser }) {
+  // Presence is a per-user heartbeat, so it is authenticated; the broadcast feed
+  // below is a public read-only endpoint and is intentionally left open.
+  app.use('/api/presence', resolveUser);
+
   async function buildFeed(userId) {
     if (userId && presence) presence.touch(userId);
     const broadcasts = await loadBroadcasts(12);
@@ -15,7 +19,7 @@ export function registerCommunityRoutes(app, { presence }) {
 
   // Heartbeat: keeps the user marked online and returns the live feed.
   app.post('/api/presence', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     sendJson(res, await buildFeed(userId));
   }));
 

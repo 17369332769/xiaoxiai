@@ -39,15 +39,22 @@ export function useGameStore() {
   const [avatarState, setAvatarState] = useState('normal'); // normal, happy, blush
   const [chatHistory, setChatHistory] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [onlineCount, setOnlineCount] = useState(1314);
+  // Start at 1 (just this client); the presence poll replaces it with the real
+  // count within ~2s. Avoid a fabricated "looks busy" seed.
+  const [onlineCount, setOnlineCount] = useState(1);
+  // Neutral placeholder shown until the real broadcast feed loads (~2s). Avoid
+  // fabricated "player X gifted Y" lines — the ticker should only ever show real
+  // event-driven broadcasts and operator announcements.
   const [recentEvents, setRecentEvents] = useState([
     '系统：欢迎来到 xiaoxiai.com！小希在这里等待着你的关爱~',
-    '玩家「爱希一万年」刚刚给小希赠送了 水晶玫瑰 🌹！好感度暴增！',
   ]);
   const [hasCheckedInToday, setHasCheckedInToday] = useState(false);
   const [checkinStreak, setCheckinStreak] = useState(0);
   const [loginStreak, setLoginStreak] = useState(0);
   const [account, setAccount] = useState({ bound: false, identifier: null });
+  // Whether the server allows the demo simulated-payment path (instant tip /
+  // replayable callback). Off in production — drives ShopModal affordances.
+  const [allowSimulatedPayment, setAllowSimulatedPayment] = useState(false);
   const [authPending, setAuthPending] = useState(false);
   const authPendingRef = useRef(false);
   const [transactions, setTransactions] = useState([]);
@@ -163,10 +170,28 @@ export function useGameStore() {
         if (data.account) {
           setAccount({ bound: Boolean(data.account.bound), identifier: data.account.identifier || null });
         }
+        setAllowSimulatedPayment(Boolean(data.allowSimulatedPayment));
         applyRelationshipProfile(data.relationship);
         resetFailureState();
       } catch (err) {
         if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
+          return;
+        }
+
+        // The bound account's token is missing/expired (e.g. after a secret
+        // rotation or cleared storage): recover instead of looping on a
+        // misleading "backend down" error. Drop the stale token and fall back to
+        // a fresh guest so the app stays usable; logging in restores the account.
+        if (err.code === 'AUTH_REQUIRED' || err.status === 401) {
+          logger.warn('Sync rejected as unauthenticated; resetting to guest', { error: err });
+          try {
+            localStorage.removeItem('xxa_token');
+            const freshId = `user_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString().slice(-4)}`;
+            localStorage.setItem('xxa_user_id', freshId);
+            setAccount({ bound: false, identifier: null });
+            notify('登录状态已失效，已切换为游客。重新登录即可恢复你的账号进度。', 'warning', '请重新登录');
+            setUserId(freshId);
+          } catch { /* ignore storage errors */ }
           return;
         }
 
@@ -416,6 +441,10 @@ export function useGameStore() {
     checkinStreak,
     loginStreak,
     account,
+    allowSimulatedPayment,
+    // True when an unbound guest has made progress worth warning about before a
+    // login switches to another account's profile (A6).
+    hasGuestProgress: !account.bound && (level > 1 || affection > 10 || coins !== 200),
     authPending,
     registerAccount,
     loginAccount,

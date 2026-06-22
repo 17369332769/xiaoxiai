@@ -81,10 +81,22 @@ function base64url(input) {
   return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// Compact signed token: base64url(payload).hmac. No expiry rotation logic for the
-// demo — a real deployment would add exp + refresh.
-export function issueToken({ accountId, userId }, secret) {
-  const payload = base64url(JSON.stringify({ accountId, userId, iat: Date.now() }));
+// Token lifetime. Configurable via AUTH_TOKEN_TTL_DAYS (default 30 days); invalid
+// or non-positive values fall back to the default so a leaked token cannot live
+// forever (the previous behavior).
+const DEFAULT_TOKEN_TTL_DAYS = 30;
+export const TOKEN_TTL_MS = (() => {
+  const days = parseInt(process.env.AUTH_TOKEN_TTL_DAYS, 10);
+  const resolved = Number.isFinite(days) && days > 0 ? days : DEFAULT_TOKEN_TTL_DAYS;
+  return resolved * 24 * 60 * 60 * 1000;
+})();
+
+// Compact signed token: base64url(payload).hmac, where payload carries an `exp`
+// timestamp. `ttlMs` is overridable (mainly for tests). A real deployment would
+// additionally add refresh-token rotation.
+export function issueToken({ accountId, userId }, secret, ttlMs = TOKEN_TTL_MS) {
+  const iat = Date.now();
+  const payload = base64url(JSON.stringify({ accountId, userId, iat, exp: iat + ttlMs }));
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
@@ -97,7 +109,13 @@ export function verifyToken(token, secret) {
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   try {
-    return JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString());
+    const decoded = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString());
+    // Reject expired tokens. Tokens minted before exp existed (legacy) have no
+    // `exp` and are still accepted so this rollout doesn't invalidate them.
+    if (decoded && typeof decoded.exp === 'number' && Date.now() >= decoded.exp) {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }

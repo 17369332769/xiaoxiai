@@ -1,7 +1,7 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { AppError } from './appError.js';
 import { FOOD_ITEMS, GIFT_ITEMS, TASK_IDS, TIPPING_TIERS } from './gameConfig.js';
-import { asyncHandler, sanitizeText, sanitizeUserId, sendJson, validateChoice } from './httpUtils.js';
+import { asyncHandler, generateId, sanitizeText, sendJson, validateChoice } from './httpUtils.js';
 import {
   addAffection,
   computeCheckinStreak,
@@ -14,6 +14,7 @@ import {
   incrementTask,
   loadFormattedTasks,
   loadTransactions,
+  pruneUserChat,
   recordTransaction,
   resetDailyTasksIfNeeded,
   syncAbsoluteTask,
@@ -420,9 +421,13 @@ export async function generateAiResponse(openai, user, userId, text, logger) {
   }
 }
 
-export function registerApiRoutes(app, { openai, logger, presence }) {
+export function registerApiRoutes(app, { openai, logger, presence, resolveUser, allowSimulatedPayment = false }) {
+  // Every business route below identifies the user via the authoritative
+  // req.userId set by resolveUser (token-derived, or a non-bound guest id).
+  app.use(['/api/user', '/api/chat', '/api/action', '/api/task', '/api/checkin', '/api/transactions'], resolveUser);
+
   app.post('/api/user/sync', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
 
     let user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     let isNewUser = false;
@@ -460,6 +465,10 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     }
     if (presence) presence.touch(userId);
 
+    // Bound chat history growth here (not in the chat path, so it can't pin the
+    // chat_messages count that drives the reflection trigger). Best-effort.
+    await pruneUserChat(userId).catch((error) => logger.warn('Chat history prune failed', { userId, error: error.message }));
+
     const chatHistory = await dbAll(
       'SELECT id, sender, text, avatar_state as avatarState, strftime("%H:%M", created_at, "localtime") as timestamp FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 40',
       [userId]
@@ -468,7 +477,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
 
     if (chatHistory.length === 0) {
       const persona = buildPersonaContext(user);
-      const welcomeId = `welcome-${Date.now()}`;
+      const welcomeId = generateId('welcome');
       const welcomeText = `你好呀，${persona.address}！我是你的AI女友小希。${persona.timeGreeting.text} 你可以和我聊天、喂我吃好吃的，或者送我礼物哦~ 让我们一起度过美好的一天吧！(点点头)`;
       await dbRun(
         'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "normal")',
@@ -494,11 +503,14 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
       chatHistory,
       tasks: formattedTasks,
       relationship,
+      // Lets the client hide demo-only payment affordances (instant tip /
+      // replayable callback) that would fail when simulated payment is off.
+      allowSimulatedPayment,
     });
   }));
 
   app.post('/api/chat', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const text = sanitizeText(req.body?.text);
 
     const safety = checkContentSafety(text);
@@ -518,7 +530,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     await dbRun('UPDATE users SET energy = ? WHERE id = ?', [newEnergy, userId]);
     user.energy = newEnergy;
 
-    const userMsgId = `user-${Date.now()}`;
+    const userMsgId = generateId('user');
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "user", ?, "normal")',
       [userMsgId, userId, text]
@@ -531,7 +543,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
 
     const aiResponse = await generateAiResponse(openai, user, userId, text, logger);
 
-    const aiMsgId = `ai-${Date.now()}`;
+    const aiMsgId = generateId('ai');
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, ?)',
       [aiMsgId, userId, aiResponse.reply, aiResponse.emotion]
@@ -572,7 +584,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/action/feed', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const foodId = validateChoice(req.body?.foodId, Object.keys(FOOD_ITEMS), 'foodId');
     const food = FOOD_ITEMS[foodId];
 
@@ -604,14 +616,14 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     });
     await recordEvent(userId, 'feed', { foodId });
 
-    const sysMsgId = `sys-feed-${Date.now()}`;
+    const sysMsgId = generateId('sys-feed');
     const sysText = `🍱 你给小希喂食了 [${food.name}]！体力值 +${food.energy}，好感度 +${food.affection}。`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "system", ?, "normal")',
       [sysMsgId, userId, sysText]
     );
 
-    const aiMsgId = `ai-feed-${Date.now()}`;
+    const aiMsgId = generateId('ai-feed');
     const aiText = `（嗷呜一口）唔！太美味啦，肚子变得饱饱的，好感度上升！谢谢亲爱的喂我~ ${food.icon}`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "happy")',
@@ -638,7 +650,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/action/gift', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const giftId = validateChoice(req.body?.giftId, Object.keys(GIFT_ITEMS), 'giftId');
     const gift = GIFT_ITEMS[giftId];
 
@@ -671,14 +683,14 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     await recordEvent(userId, 'gift', { giftId });
     await recordFirstTime(userId, 'first_gift', { giftId });
 
-    const sysMsgId = `sys-gift-${Date.now()}`;
+    const sysMsgId = generateId('sys-gift');
     const sysText = `🎁 你送给小希 [${gift.name}]！心情值 +${gift.mood}，好感度 +${gift.affection}。`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "system", ?, "normal")',
       [sysMsgId, userId, sysText]
     );
 
-    const aiMsgId = `ai-gift-${Date.now()}`;
+    const aiMsgId = generateId('ai-gift');
     const avatarState = giftId === 'ring' ? 'blush' : 'happy';
     const aiText = giftId === 'ring'
       ? '（睁大眼睛，眼角闪烁泪光）天哪……这是给我的承诺戒指吗？亲爱的……小希愿意做你永远的女友，戴上它，我们永不分开！💍💖'
@@ -714,11 +726,18 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/action/tip', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const amount = String(req.body?.amount);
     const paymentMethod = validateChoice(req.body?.paymentMethod, ['wechat', 'alipay'], 'paymentMethod');
     const tier = TIPPING_TIERS[String(amount)];
     if (!tier) throw new AppError(400, 'INVALID_TIP_TIER', 'Invalid tip tier');
+
+    // SECURITY: the instant tip mints coins with NO real payment, so it is a
+    // demo-only convenience. Disabled by default; in production a tip must go
+    // through the signed /api/order/create -> /api/payment/callback gateway flow.
+    if (!allowSimulatedPayment) {
+      throw new AppError(403, 'TIP_SIMULATION_DISABLED', '即时模拟打赏已停用，请通过正式支付下单。');
+    }
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
@@ -741,14 +760,14 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     await recordFirstTime(userId, 'first_tip', { amount: tier.amount });
     await pushBroadcast('tip', `💝 感谢亲爱的打赏小希 ¥${tier.amount} 元，这份心意小希收到啦！`, 1);
 
-    const sysMsgId = `sys-tip-${Date.now()}`;
+    const sysMsgId = generateId('sys-tip');
     const sysText = `💝 感谢你使用 ${paymentMethod === 'wechat' ? '微信支付' : '支付宝'} 打赏小希 ¥${tier.amount} 元！获得 ${tier.coins} 爱心币，好感度 +${affPoints}，体力与心情值回满！`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "system", ?, "normal")',
       [sysMsgId, userId, sysText]
     );
 
-    const aiMsgId = `ai-tip-${Date.now()}`;
+    const aiMsgId = generateId('ai-tip');
     const aiText = '（红着脸，眼里全是感动）哇……谢谢亲爱的对小希的打赏和支持！有你在背后默默支持我，小希觉得超级幸福。我会一直陪伴在你的身边，比心！💖🙆‍♀️';
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "blush")',
@@ -777,7 +796,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/task/claim', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const taskId = validateChoice(req.body?.taskId, TASK_IDS, 'taskId');
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     const task = await dbGet('SELECT * FROM tasks WHERE user_id = ? AND task_id = ?', [userId, taskId]);
@@ -813,7 +832,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     });
     await recordEvent(userId, 'task_claim', { taskId });
 
-    const sysMsgId = `sys-claim-${Date.now()}`;
+    const sysMsgId = generateId('sys-claim');
     const sysText = `💰 成功领取任务 [${task.name}] 奖励，获得 ${task.reward} 爱心币！`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "system", ?, "normal")',
@@ -830,7 +849,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/checkin', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 
@@ -875,7 +894,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
     await recordFirstTime(userId, 'first_checkin', {});
     await recordEvent(userId, 'checkin', { streak });
 
-    const aiMsgId = `ai-checkin-${Date.now()}`;
+    const aiMsgId = generateId('ai-checkin');
     const aiText = `📅 签到成功！这是你连续签到的第 ${streak} 天，小希送你 ${bonus} 爱心币作为奖励~ 亲爱的能天天来见我，小希真的很开心！么么哒~`;
     await dbRun(
       'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "happy")',
@@ -894,7 +913,7 @@ export function registerApiRoutes(app, { openai, logger, presence }) {
   }));
 
   app.post('/api/transactions', asyncHandler(async (req, res) => {
-    const userId = sanitizeUserId(req.body?.userId);
+    const userId = req.userId;
     const user = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 
