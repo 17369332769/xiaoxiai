@@ -53,21 +53,6 @@ export function buildRelationshipRecentUpdate(updateMessage) {
   };
 }
 
-export function replaceTemporaryChatMessage(history, tempId, aiMessage, systemMessages = []) {
-  const updated = history.map((message) => (
-    message.id === tempId
-      ? { ...message, id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` }
-      : message
-  ));
-
-  updated.push(aiMessage);
-  if (systemMessages.length) {
-    updated.push(...systemMessages);
-  }
-
-  return updated;
-}
-
 export function appendServerMessages(history, primaryMessages, systemMessages = []) {
   const nextMessages = Array.isArray(primaryMessages) ? primaryMessages : [primaryMessages];
   const updated = [...history, ...nextMessages];

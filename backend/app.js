@@ -6,6 +6,7 @@ import { registerAccountRoutes } from './accountRoutes.js';
 import { registerCommunityRoutes } from './communityRoutes.js';
 import { registerAnalyticsRoutes } from './analyticsRoutes.js';
 import { registerMemoryRoutes } from './memoryRoutes.js';
+import { registerTtsRoutes } from './ttsRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
 import { createPresenceTracker } from './presence.js';
 import { createResolveUser } from './resolveUser.js';
@@ -66,6 +67,7 @@ export function createApp({
   registerCommunityRoutes(app, { presence, resolveUser });
   registerAnalyticsRoutes(app, { resolveUser });
   registerMemoryRoutes(app, { resolveUser });
+  registerTtsRoutes(app, { resolveUser });
   registerAdminRoutes(app, { adminToken, presence });
 
   app.use(createErrorHandler(logger));

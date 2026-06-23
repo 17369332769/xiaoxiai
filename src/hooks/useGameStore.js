@@ -55,6 +55,10 @@ export function useGameStore() {
   // Whether the server allows the demo simulated-payment path (instant tip /
   // replayable callback). Off in production — drives ShopModal affordances.
   const [allowSimulatedPayment, setAllowSimulatedPayment] = useState(false);
+  // Which AI message is currently being voiced (TTS), so its 🔊 button can show
+  // a playing state. null when nothing is speaking.
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const ttsAudioRef = useRef(null);
   const [authPending, setAuthPending] = useState(false);
   const authPendingRef = useRef(false);
   const [transactions, setTransactions] = useState([]);
@@ -402,6 +406,38 @@ export function useGameStore() {
     }
   }, [userId, notify, isMounted]);
 
+  // On-demand voice playback (RunningHub TTS) for a chat reply. Best-effort:
+  // failures notify the user and never throw.
+  const playVoice = useCallback(async (text, messageId = null) => {
+    if (!userId || !text) return false;
+    try {
+      try { ttsAudioRef.current?.pause(); } catch { /* ignore */ }
+      setStateIfMounted(setSpeakingMessageId, messageId);
+      const data = await postJson('/api/tts', { userId, text });
+      if (!isMounted()) return false;
+      if (!data.audioUrl) {
+        setStateIfMounted(setSpeakingMessageId, null);
+        return false;
+      }
+      const audio = new Audio(data.audioUrl);
+      ttsAudioRef.current = audio;
+      const clearSpeaking = () => setStateIfMounted(setSpeakingMessageId, null);
+      audio.addEventListener('ended', clearSpeaking);
+      audio.addEventListener('error', clearSpeaking);
+      await audio.play();
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Voice playback failed', { error: err });
+      const message = err.code === 'TTS_DISABLED'
+        ? '语音功能还没配置好哦~'
+        : '语音合成暂时不可用，稍后再试~';
+      notify(message, 'warning', '语音');
+      setStateIfMounted(setSpeakingMessageId, null);
+      return false;
+    }
+  }, [userId, isMounted, setStateIfMounted, notify]);
+
   // Fire-and-forget UI behavior beacon (best-effort analytics; never throws).
   const track = useCallback((type, payload = {}) => {
     if (!userId) return;
@@ -458,6 +494,8 @@ export function useGameStore() {
     loadMemories,
     deleteMemory,
     clearMemories,
+    playVoice,
+    speakingMessageId,
     track,
     syncError,
     retrySync,

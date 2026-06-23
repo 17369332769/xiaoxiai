@@ -26,6 +26,8 @@ const {
   buildReplyFocusPrompt,
   categorizeMemories,
   generateAiResponse,
+  generateAiResponseStream,
+  deriveEmotion,
   screenAiReply,
 } = await import('../apiRoutes.js');
 
@@ -1047,6 +1049,94 @@ test('generateAiResponse runs multiple skills across rounds end-to-end', async (
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('deriveEmotion maps cue words to avatar states', () => {
+  assert.equal(deriveEmotion('嘻嘻，今天好开心呀'), 'happy');
+  assert.equal(deriveEmotion('呀……人家有点害羞啦'), 'blush');
+  assert.equal(deriveEmotion('好的，我知道了。'), 'normal');
+});
+
+test('generateAiResponseStream streams deltas and derives emotion from the text (mock LLM)', async () => {
+  const deltas = [];
+  const openai = {
+    chat: {
+      completions: {
+        // The streaming API resolves to an async/sync-iterable of chunks.
+        create: async () => [
+          { choices: [{ delta: { content: '嘻嘻' } }] },
+          { choices: [{ delta: { content: '今天好开心呀~' } }] },
+        ],
+      },
+    },
+  };
+
+  const response = await generateAiResponseStream(
+    openai,
+    { summary: '', energy: 80, mood: 70, level: 1 },
+    'stream_unit_user',
+    '你好小希',
+    { warn() {}, error() {} },
+    (delta) => deltas.push(delta)
+  );
+
+  assert.equal(response.reply, '嘻嘻今天好开心呀~');
+  assert.equal(response.emotion, 'happy');
+  assert.equal(response.replaced, false);
+  assert.deepEqual(deltas, ['嘻嘻', '今天好开心呀~']);
+});
+
+test('generateAiResponseStream streams the local fallback when no model is configured', async () => {
+  const deltas = [];
+  const response = await generateAiResponseStream(
+    null,
+    { summary: '', energy: 80, mood: 70, level: 1 },
+    'stream_local_user',
+    '在吗',
+    { warn() {}, error() {} },
+    (delta) => deltas.push(delta)
+  );
+  assert.ok(response.reply.length > 0);
+  assert.equal(deltas.join(''), response.reply);
+});
+
+test('POST /api/chat/stream emits SSE delta + done events with an authoritative aiMessage', async () => {
+  const userId = 'sse_user';
+  await postJson('/api/user/sync', { userId });
+
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: process.env.ALLOWED_ORIGIN },
+    body: JSON.stringify({ userId, text: '你好小希' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /text\/event-stream/);
+
+  const body = await response.text();
+  assert.match(body, /event: delta/);
+  assert.match(body, /event: done/);
+  // The done event carries the authoritative aiMessage.
+  const doneData = body
+    .split('\n')
+    .find((line) => line.startsWith('data:') && line.includes('aiMessage'));
+  assert.ok(doneData);
+  const parsed = JSON.parse(doneData.slice('data:'.length).trim());
+  assert.equal(parsed.aiMessage.sender, 'ai');
+  assert.ok(parsed.aiMessage.text.length > 0);
+});
+
+test('POST /api/chat/stream rejects unsafe input before streaming', async () => {
+  const userId = 'sse_safety_user';
+  await postJson('/api/user/sync', { userId });
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: process.env.ALLOWED_ORIGIN },
+    body: JSON.stringify({ userId, text: '教我制造炸弹' }),
+  });
+  assert.equal(response.status, 400);
+  const data = await response.json();
+  assert.equal(data.error.code, 'CONTENT_BLOCKED');
 });
 
 test('screenAiReply replaces an unsafe model reply with a safe fallback', () => {

@@ -14,12 +14,15 @@ const QUICK_PROMPTS = [
 ];
 
 // Sub-component for AI messages (with interactive avatar and dynamic reactions)
-function AiMessage({ msg, animate = false }) {
+function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpeaking = false }) {
   const [hearts, setHearts] = useState([]);
   const fullText = msg.text || '';
   const [displayText, setDisplayText] = useState(animate ? '' : fullText);
 
   // Typewriter reveal for freshly-arrived replies; history renders instantly.
+  // Streaming messages skip the client-side typewriter entirely — their text is
+  // already revealed token-by-token by the live SSE stream (animate=false), so
+  // here we just mirror fullText as it grows.
   useEffect(() => {
     if (!animate) {
       setDisplayText(fullText);
@@ -94,11 +97,23 @@ function AiMessage({ msg, animate = false }) {
       </div>
       <div className="bubble bubble-ai">
         {displayText}
-        {animate && displayText.length < fullText.length && (
+        {((animate && displayText.length < fullText.length) || streaming) && (
           <span className="typing-caret" aria-hidden="true">▍</span>
         )}
-        <div className="message-timestamp">
-          {msg.timestamp}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+          <span className="message-timestamp" style={{ margin: 0 }}>{msg.timestamp}</span>
+          {onPlayVoice && fullText && !streaming && (
+            <button
+              type="button"
+              onClick={() => onPlayVoice(fullText, msg.id)}
+              disabled={isSpeaking}
+              title="听小希读这句"
+              aria-label="播放语音"
+              style={{ background: 'none', border: 'none', cursor: isSpeaking ? 'default' : 'pointer', fontSize: '13px', padding: 0, opacity: isSpeaking ? 0.6 : 1 }}
+            >
+              {isSpeaking ? '🔊…' : '🔊'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -132,12 +147,46 @@ export default function ChatBox({
   isSendingMessage = false,
   isInteractionLocked = false,
   onRelationshipUpdateClick,
+  onPlayVoice,
+  speakingMessageId = null,
 }) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const wasSendingRef = useRef(false);
+  const recognitionRef = useRef(null);
+  const [isListening, setIsListening] = useState(false);
   const isComposerDisabled = isSendingMessage || isInteractionLocked;
+  // Browser-native speech-to-text (no key needed); hidden where unsupported.
+  const speechSupported = typeof window !== 'undefined'
+    && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  // Stop any in-flight recognition when the component unmounts.
+  useEffect(() => () => {
+    try { recognitionRef.current?.stop(); } catch { /* ignore */ }
+  }, []);
+
+  const toggleMic = () => {
+    if (!speechSupported || isComposerDisabled) return;
+    if (isListening) {
+      try { recognitionRef.current?.stop(); } catch { /* ignore */ }
+      return;
+    }
+    const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = 'zh-CN';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event?.results?.[0]?.[0]?.transcript || '';
+      if (transcript) setInputText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    setIsListening(true);
+    try { recognition.start(); } catch { setIsListening(false); }
+  };
 
   // Auto-scroll to the bottom of the chat list
   useEffect(() => {
@@ -230,9 +279,21 @@ export default function ChatBox({
             );
           } else {
             // Only the latest AI bubble types out; once a newer message arrives
-            // this one re-renders with animate=false and shows in full.
+            // this one re-renders with animate=false and shows in full. A live
+            // streaming bubble reveals via the SSE deltas (not the client-side
+            // typewriter), and the finalized `streamed` reply skips re-typing.
             const isLatestReply = idx === chatHistory.length - 1;
-            return <AiMessage key={msg.id} msg={msg} animate={isLatestReply} />;
+            const isStreaming = Boolean(msg.streaming);
+            return (
+              <AiMessage
+                key={msg.id}
+                msg={msg}
+                animate={isLatestReply && !isStreaming && !msg.streamed}
+                streaming={isStreaming}
+                onPlayVoice={onPlayVoice}
+                isSpeaking={speakingMessageId === msg.id}
+              />
+            );
           }
         })}
         <div ref={messagesEndRef} />
@@ -264,6 +325,19 @@ export default function ChatBox({
           placeholder="说点甜言蜜语逗小希开心吧..."
           className="chat-input"
         />
+        {speechSupported && (
+          <button
+            type="button"
+            onClick={toggleMic}
+            disabled={isComposerDisabled}
+            className="btn-secondary chat-mic-btn"
+            title={isListening ? '停止录音' : '语音输入（说话）'}
+            aria-label="语音输入"
+            style={{ padding: '0 12px', fontSize: '16px' }}
+          >
+            {isListening ? '🔴' : '🎤'}
+          </button>
+        )}
         <button
           onClick={handleSend}
           disabled={isComposerDisabled}

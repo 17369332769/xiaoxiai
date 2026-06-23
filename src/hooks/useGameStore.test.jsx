@@ -11,6 +11,37 @@ function mockJsonResponse(payload, ok = true, status = 200) {
   });
 }
 
+// Builds a fetch Response-like object that streams the chat reply as SSE frames
+// (one `delta` per chunk, then a `done` frame carrying the authoritative
+// payload) so the streaming sendMessage path can be exercised in tests.
+function makeSseResponse(donePayload, deltas = ['…']) {
+  const frames = deltas.map((text) => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
+  frames.push(`event: done\ndata: ${JSON.stringify(donePayload)}\n\n`);
+  const chunks = frames.map((frame) => new TextEncoder().encode(frame));
+  let cursor = 0;
+  return {
+    ok: true,
+    status: 200,
+    headers: {
+      get: (name) => (String(name).toLowerCase() === 'content-type'
+        ? 'text/event-stream; charset=utf-8'
+        : null),
+    },
+    body: {
+      getReader: () => ({
+        read: () => (cursor < chunks.length
+          ? Promise.resolve({ value: chunks[cursor++], done: false })
+          : Promise.resolve({ value: undefined, done: true })),
+        cancel: () => Promise.resolve(),
+      }),
+    },
+  };
+}
+
+function mockSseResponse(donePayload, deltas) {
+  return Promise.resolve(makeSseResponse(donePayload, deltas));
+}
+
 describe('useGameStore', () => {
   test('syncs initial user state from backend on mount', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
@@ -116,8 +147,8 @@ describe('useGameStore', () => {
         });
       }
 
-      if (input === '/api/chat') {
-        return mockJsonResponse({
+      if (input === '/api/chat/stream') {
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: 'ai-1',
@@ -375,7 +406,7 @@ describe('useGameStore', () => {
         });
       }
 
-      if (input === '/api/chat') {
+      if (input === '/api/chat/stream') {
         return chatRequest;
       }
 
@@ -404,29 +435,25 @@ describe('useGameStore', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
 
     await act(async () => {
-      resolveChatRequest({
+      resolveChatRequest(makeSseResponse({
         ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          aiMessage: {
-            id: 'ai-dup-1',
-            sender: 'ai',
-            text: '小希收到啦~',
-            avatarState: 'happy',
-            timestamp: '10:01',
-          },
-          user: {
-            level: 1,
-            affection: 12,
-            energy: 78,
-            mood: 72,
-            coins: 200,
-          },
-          tasks: [],
-          systemMessages: [],
-        }),
-      });
+        aiMessage: {
+          id: 'ai-dup-1',
+          sender: 'ai',
+          text: '小希收到啦~',
+          avatarState: 'happy',
+          timestamp: '10:01',
+        },
+        user: {
+          level: 1,
+          affection: 12,
+          energy: 78,
+          mood: 72,
+          coins: 200,
+        },
+        tasks: [],
+        systemMessages: [],
+      }));
       await firstPromise;
     });
 
@@ -552,14 +579,14 @@ describe('useGameStore', () => {
         });
       }
 
-      if (input === '/api/chat') {
+      if (input === '/api/chat/stream') {
         chatCalls += 1;
 
         if (chatCalls === 1) {
           return Promise.reject(new Error('temporary failure'));
         }
 
-        return mockJsonResponse({
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: 'ai-retry-1',
@@ -806,10 +833,10 @@ describe('useGameStore', () => {
         });
       }
 
-      if (input === '/api/chat') {
+      if (input === '/api/chat/stream') {
         chatCalls += 1;
 
-        return mockJsonResponse({
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: `ai-memory-${chatCalls}`,
@@ -890,10 +917,10 @@ describe('useGameStore', () => {
         });
       }
 
-      if (input === '/api/chat') {
+      if (input === '/api/chat/stream') {
         chatCalls += 1;
 
-        return mockJsonResponse({
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: `ai-memory-repeat-${chatCalls}`,

@@ -76,6 +76,21 @@ describe('ChatBox', () => {
     expect(retryLastFailedMessage).toHaveBeenCalled();
   });
 
+  test('renders a streaming reply as live text immediately (no client typewriter)', () => {
+    // A normal latest AI reply types out from empty via setInterval; a streaming
+    // bubble must show its server-streamed text right away with a caret.
+    const { container } = render(
+      <ChatBox
+        chatHistory={[
+          { id: 'ai-stream', sender: 'ai', text: '你好呀，亲爱的', avatarState: 'normal', streaming: true, timestamp: '10:20' },
+        ]}
+        sendMessage={vi.fn()}
+      />
+    );
+
+    expect(container.textContent).toContain('你好呀，亲爱的');
+  });
+
   test('clicking a relationship update system message triggers the focus callback', () => {
     const onRelationshipUpdateClick = vi.fn();
 

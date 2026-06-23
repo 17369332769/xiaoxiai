@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FOOD_ITEMS, GIFT_ITEMS } from '../../shared/gameConfig.js';
-import { isAbortError, postJson } from '../utils/apiClient.js';
+import { isAbortError, postJson, postSse } from '../utils/apiClient.js';
 import { createClientLogger } from '../utils/clientLogger.js';
 import {
   applyUserSnapshot,
   appendServerMessages,
   buildChatFailureMessage,
   createTimestampedMessage,
-  replaceTemporaryChatMessage,
 } from '../utils/gameStoreHelpers.js';
 
 const logger = createClientLogger('game-actions');
@@ -118,6 +117,11 @@ export function useGameActions({
     setStateIfMounted(setLastFailedAction, null);
   }, [setStateIfMounted]);
 
+  // Streams the reply over SSE for a real (server-driven) typewriter. We insert
+  // an empty AI placeholder, grow its text as `delta` frames arrive, then on the
+  // `done` frame swap in the authoritative aiMessage (which may differ if output
+  // safety replaced it) and apply the canonical user / tasks / relationship
+  // snapshot. The non-streaming /api/chat endpoint stays as the server fallback.
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || !userId || isSyncing) {
       return false;
@@ -127,35 +131,98 @@ export function useGameActions({
       return false;
     }
 
-    const tempId = `user-temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const userMsg = createTimestampedMessage(tempId, 'user', text);
-    setChatHistory((prev) => [...prev, userMsg]);
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempUserId = `user-temp-${suffix}`;
+    const tempAiId = `ai-temp-${suffix}`;
+    const userMsg = createTimestampedMessage(tempUserId, 'user', text);
+    const aiPlaceholder = createTimestampedMessage(tempAiId, 'ai', '', {
+      avatarState: 'normal',
+      streaming: true,
+    });
+    setChatHistory((prev) => [...prev, userMsg, aiPlaceholder]);
     const controller = createTrackedRequestController();
 
+    let streamedText = '';
+    let finalized = false;
+
     try {
-      const data = await postJson('/api/chat', { userId, text }, { signal: controller.signal });
+      await postSse('/api/chat/stream', { userId, text }, {
+        signal: controller.signal,
+        onEvent: (event, payload) => {
+          if (event === 'delta') {
+            streamedText += payload.text || '';
+            if (!isMounted()) return;
+            setChatHistory((prev) => prev.map((msg) => (
+              msg.id === tempAiId ? { ...msg, text: streamedText } : msg
+            )));
+          } else if (event === 'done') {
+            if (!isMounted()) return;
+            const aiMessage = payload.aiMessage;
+            if (!aiMessage) {
+              // A malformed/truncated `done` frame parses to `{}` upstream — bail
+              // before mutating history so the catch cleans up both temps.
+              throw new Error('回复没有收完，请稍后再试。');
+            }
+            // Mark finalized before the post-commit side effects so a later
+            // snapshot / injected-callback error can't retroactively turn a
+            // delivered reply into a failure (the catch returns success then).
+            finalized = true;
+            const finalAiMessage = { ...aiMessage, streamed: true };
+            setChatHistory((prev) => {
+              const next = prev
+                .filter((msg) => msg.id !== tempAiId)
+                .map((msg) => (msg.id === tempUserId
+                  ? { ...msg, id: `user-${suffix}` }
+                  : msg));
+              next.push(finalAiMessage);
+              if (payload.systemMessages?.length) {
+                next.push(...payload.systemMessages);
+              }
+              return next;
+            });
+            applyUserSnapshot(payload.user, userStateSetters);
+            setTasks(payload.tasks);
+            if (payload.relationship) {
+              applyRelationshipProfile(payload.relationship, { announce: true });
+            }
+            resetFailureState();
+            setAvatarState(aiMessage.avatarState);
+          } else if (event === 'error') {
+            throw new Error(payload.message || '生成回复时出错了，请稍后再试。');
+          }
+        },
+      });
+
       if (controller.signal.aborted || !isMounted()) {
         return false;
       }
 
-      setChatHistory((prev) => replaceTemporaryChatMessage(prev, tempId, data.aiMessage, data.systemMessages));
-      applyUserSnapshot(data.user, userStateSetters);
-      setTasks(data.tasks);
-      if (data.relationship) {
-        applyRelationshipProfile(data.relationship, { announce: true });
+      if (!finalized) {
+        // Stream ended without a `done` frame (truncated connection) — surface
+        // it as a failure so the user can retry rather than seeing a half reply.
+        throw new Error('回复没有收完，请稍后再试。');
       }
-      resetFailureState();
-      setAvatarState(data.aiMessage.avatarState);
+
       return true;
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err) || !isMounted()) {
         return false;
       }
 
-      logger.error('Chat request failed', { error: err });
+      if (finalized) {
+        // The authoritative reply was already committed; a later side-effect
+        // error must not append a failure bubble over a delivered reply.
+        logger.error('Chat stream post-finalize step failed', { error: err });
+        return true;
+      }
+
+      logger.error('Chat stream failed', { error: err });
       notify(err.message, 'error', '发送失败');
       setStateIfMounted(setLastFailedMessage, text);
-      setChatHistory((prev) => [...prev.filter((msg) => msg.id !== tempId), buildChatFailureMessage()]);
+      setChatHistory((prev) => [
+        ...prev.filter((msg) => msg.id !== tempUserId && msg.id !== tempAiId),
+        buildChatFailureMessage(),
+      ]);
       return false;
     } finally {
       releaseTrackedRequestController(controller);

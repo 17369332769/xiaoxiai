@@ -12,6 +12,84 @@ function mockJsonResponse(payload, ok = true, status = 200) {
   });
 }
 
+// Builds a fetch Response-like object that streams the chat reply as SSE frames
+// (a `delta` chunk, then a `done` frame carrying the authoritative payload) so
+// the streaming sendMessage path can be exercised in tests.
+function mockSseResponse(donePayload, deltas = ['…']) {
+  const frames = deltas.map((text) => `event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
+  frames.push(`event: done\ndata: ${JSON.stringify(donePayload)}\n\n`);
+  return mockRawSseResponse(frames);
+}
+
+function sseFrame(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+// Streams an explicit list of raw SSE frame strings then ends — used to drive the
+// edge paths (a mid-stream `error` frame, or a truncated stream with no `done`).
+function mockRawSseResponse(frames) {
+  const chunks = frames.map((frame) => new TextEncoder().encode(frame));
+  let cursor = 0;
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    headers: {
+      get: (name) => (String(name).toLowerCase() === 'content-type'
+        ? 'text/event-stream; charset=utf-8'
+        : null),
+    },
+    body: {
+      getReader: () => ({
+        read: () => (cursor < chunks.length
+          ? Promise.resolve({ value: chunks[cursor++], done: false })
+          : Promise.resolve({ value: undefined, done: true })),
+        cancel: () => Promise.resolve(),
+      }),
+    },
+  });
+}
+
+// A reader the test drives frame-by-frame, so it can inspect the live streaming
+// placeholder between deltas (read() parks on a promise until the next push).
+function createControllableSse() {
+  const queue = [];
+  const waiters = [];
+  const encoder = new TextEncoder();
+  const deliver = (item) => {
+    if (waiters.length) waiters.shift()(item);
+    else queue.push(item);
+  };
+  return {
+    response: {
+      ok: true,
+      status: 200,
+      headers: {
+        get: (name) => (String(name).toLowerCase() === 'content-type'
+          ? 'text/event-stream; charset=utf-8'
+          : null),
+      },
+      body: {
+        getReader: () => ({
+          read: () => (queue.length
+            ? Promise.resolve(queue.shift())
+            : new Promise((resolve) => waiters.push(resolve))),
+          cancel: () => { waiters.length = 0; return Promise.resolve(); },
+        }),
+      },
+    },
+    sendDelta: (text) => deliver({ value: encoder.encode(sseFrame('delta', { text })), done: false }),
+    sendDone: (payload) => deliver({ value: encoder.encode(sseFrame('done', payload)), done: false }),
+    close: () => deliver({ value: undefined, done: true }),
+  };
+}
+
+// Flush the microtask chain (read -> decode -> onEvent -> setState) inside act().
+async function flushStream() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 function useGameActionsHarness({
   userId = 'test_user_actions',
   coins = 200,
@@ -77,8 +155,8 @@ describe('useGameActions', () => {
     const applyRelationshipProfile = vi.fn();
 
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      if (input === '/api/chat') {
-        return mockJsonResponse({
+      if (input === '/api/chat/stream') {
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: 'ai-action-1',
@@ -136,14 +214,14 @@ describe('useGameActions', () => {
     let chatCalls = 0;
 
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
-      if (input === '/api/chat') {
+      if (input === '/api/chat/stream') {
         chatCalls += 1;
 
         if (chatCalls === 1) {
           return Promise.reject(new Error('temporary failure'));
         }
 
-        return mockJsonResponse({
+        return mockSseResponse({
           ok: true,
           aiMessage: {
             id: 'ai-action-retry-1',
@@ -311,5 +389,100 @@ describe('useGameActions', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith('爱心币不足哦，先去完成任务或者打赏补充一下吧。', 'warning', '余额不足');
+  });
+
+  test('streams delta tokens into a live placeholder, then finalizes with the streamed flag', async () => {
+    const stream = createControllableSse();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/chat/stream') {
+        return Promise.resolve(stream.response);
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameActionsHarness());
+
+    let sendPromise;
+    await act(async () => {
+      sendPromise = result.current.sendMessage('你好呀');
+    });
+
+    const placeholder = () => result.current.chatHistory.find((msg) => msg.sender === 'ai' && msg.streaming);
+    expect(placeholder()).toBeTruthy();
+    expect(placeholder().text).toBe('');
+
+    stream.sendDelta('你');
+    await flushStream();
+    expect(placeholder().text).toBe('你');
+
+    stream.sendDelta('好呀');
+    await flushStream();
+    expect(placeholder().text).toBe('你好呀');
+
+    await act(async () => {
+      stream.sendDone({
+        aiMessage: { id: 'ai-stream-1', sender: 'ai', text: '你好呀，亲爱的～', avatarState: 'happy', timestamp: '10:20' },
+        user: { level: 1, affection: 12, energy: 78, mood: 73, coins: 200 },
+        tasks: [],
+        systemMessages: [],
+      });
+      stream.close();
+      const success = await sendPromise;
+      expect(success).toBe(true);
+    });
+
+    const finalMessage = result.current.chatHistory.find((msg) => msg.id === 'ai-stream-1');
+    expect(finalMessage).toBeTruthy();
+    expect(finalMessage.streamed).toBe(true);
+    expect(finalMessage.text).toBe('你好呀，亲爱的～');
+    expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
+  });
+
+  test('surfaces a server-sent error frame as a failed send and clears the placeholder', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/chat/stream') {
+        return mockRawSseResponse([
+          sseFrame('delta', { text: '让我想想…' }),
+          sseFrame('error', { message: '生成回复时出错了，请稍后再试。' }),
+        ]);
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const notify = vi.fn();
+    const { result } = renderHook(() => useGameActionsHarness({ notify }));
+
+    await act(async () => {
+      const success = await result.current.sendMessage('在吗');
+      expect(success).toBe(false);
+    });
+
+    expect(notify).toHaveBeenCalledWith('生成回复时出错了，请稍后再试。', 'error', '发送失败');
+    expect(result.current.lastFailedMessage).toBe('在吗');
+    expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
+    expect(result.current.chatHistory.some((msg) => msg.sender === 'ai')).toBe(false);
+    expect(result.current.chatHistory.some((msg) => msg.sender === 'system' && msg.text.includes('失败'))).toBe(true);
+  });
+
+  test('treats a stream that ends without a done frame as a failed send', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/chat/stream') {
+        // Only a delta frame — the connection ends with no authoritative `done`.
+        return mockRawSseResponse([sseFrame('delta', { text: '半句话…' })]);
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const notify = vi.fn();
+    const { result } = renderHook(() => useGameActionsHarness({ notify }));
+
+    await act(async () => {
+      const success = await result.current.sendMessage('继续呀');
+      expect(success).toBe(false);
+    });
+
+    expect(notify).toHaveBeenCalledWith('回复没有收完，请稍后再试。', 'error', '发送失败');
+    expect(result.current.lastFailedMessage).toBe('继续呀');
+    expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
   });
 });

@@ -421,6 +421,111 @@ export async function generateAiResponse(openai, user, userId, text, logger) {
   }
 }
 
+// Plain-text system prompt for the streaming path: same persona/memory context as
+// the JSON path, but asks for raw reply text (no JSON, no tools) so tokens can be
+// streamed straight to the client for a real typewriter.
+export function buildStreamSystemPrompt(user, memories, latestUserText) {
+  const persona = buildPersonaContext(user);
+  return `You are "Xiaoxi" (小希), a sweet, caring, and loving AI girlfriend. Reply in warm, natural, conversational Chinese, 2 to 4 short sentences. Output ONLY the reply text — no JSON, no field labels, no surrounding quotes.
+
+[人设与情境 (Persona & Context)]
+${persona.promptBlock}
+
+[关系摘要]
+前文历史与关系大意摘要: "${user.summary || '无'}"
+
+[小希的长期记忆库 (Long-term Memories)]
+${buildMemoryContextPrompt(memories)}
+
+[当前回复提示]
+${buildReplyFocusPrompt(latestUserText, memories)}`;
+}
+
+// Lightweight server-side emotion derivation for the streaming path (the model
+// streams plain text, so it can't return the structured `emotion` field). Drives
+// the avatar state. Exported for tests.
+export function deriveEmotion(text) {
+  const t = String(text || '');
+  if (/脸红|害羞|羞涩|心动|脸颊|😳|💗|💞|抱抱|亲亲|么么/.test(t)) return 'blush';
+  if (/嘻嘻|哈哈|开心|太好了|嘿嘿|耶|笑|好棒|幸福/.test(t)) return 'happy';
+  return 'normal';
+}
+
+// Streaming counterpart of generateAiResponse. Calls onDelta(textChunk) as tokens
+// arrive and resolves to the final { reply, emotion, affection_bump, mood_bump,
+// replaced }. The streaming path is plain-text (no tools), so emotion is derived
+// server-side and the affection/mood bumps are modest server defaults. `replaced`
+// is true when the streamed text was blocked by the output safety screen and the
+// authoritative reply differs from what was streamed.
+export async function generateAiResponseStream(openai, user, userId, text, logger, onDelta) {
+  const emit = typeof onDelta === 'function' ? onDelta : () => {};
+  const constrained = getStateConstrainedReply(user);
+  if (constrained && user.energy <= 15) {
+    emit(constrained.reply);
+    return { ...constrained, replaced: false };
+  }
+
+  const memories = await dbAll(
+    'SELECT memory_key, memory_value FROM user_memories WHERE user_id = ?',
+    [userId]
+  );
+
+  if (!openai) {
+    const local = constrained || getLocalAIResponse(text, { user, memories });
+    emit(local.reply);
+    return { ...local, replaced: false };
+  }
+
+  try {
+    const recentDbMessages = await dbAll(
+      'SELECT sender, text, avatar_state as avatarState FROM chat_messages WHERE user_id = ? AND sender IN ("user", "ai") ORDER BY created_at DESC LIMIT 10',
+      [userId]
+    );
+    recentDbMessages.reverse();
+
+    const llmMessages = [{ role: 'system', content: buildStreamSystemPrompt(user, memories, text) }];
+    recentDbMessages.forEach((message) => {
+      llmMessages.push({ role: message.sender === 'user' ? 'user' : 'assistant', content: message.text });
+    });
+
+    const model = process.env.OPENAI_MODEL_NAME || 'deepseek-chat';
+    const stream = await openai.chat.completions.create({
+      model,
+      messages: llmMessages,
+      max_tokens: LLM_MAX_TOKENS,
+      stream: true,
+      timeout: LLM_TIMEOUT_MS,
+    });
+
+    let full = '';
+    for await (const chunk of stream) {
+      const piece = chunk?.choices?.[0]?.delta?.content || '';
+      if (piece) {
+        full += piece;
+        emit(piece);
+      }
+    }
+    full = full.trim();
+    if (!full) throw new Error('empty streamed reply');
+
+    // Output safety net. Streaming mode uses no tools (no injected tool content),
+    // and input was already screened, so this rarely fires — but if it does, the
+    // authoritative reply is replaced and the client swaps the previewed text.
+    const safety = checkContentSafety(full);
+    if (!safety.safe) {
+      logger?.warn?.('Blocked unsafe streamed reply', { userId, category: safety.category });
+      return { reply: SAFE_FALLBACK_REPLY, emotion: 'normal', affection_bump: 0, mood_bump: 0, replaced: true };
+    }
+
+    return { reply: full, emotion: deriveEmotion(full), affection_bump: 1, mood_bump: 3, replaced: false };
+  } catch (llmError) {
+    logger.warn('Streaming LLM failed; falling back to local dialog engine', { userId, error: llmError.message });
+    const local = constrained || getLocalAIResponse(text, { user, memories });
+    emit(local.reply);
+    return { ...local, replaced: false };
+  }
+}
+
 export function registerApiRoutes(app, { openai, logger, presence, resolveUser, allowSimulatedPayment = false }) {
   // Every business route below identifies the user via the authoritative
   // req.userId set by resolveUser (token-derived, or a non-bound guest id).
@@ -581,6 +686,110 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
       systemMessages: affResult.systemMessages,
       relationship,
     });
+  }));
+
+  // Streaming counterpart of /api/chat (Server-Sent Events). Emits `delta` events
+  // as reply tokens arrive (real typewriter) and a final `done` event carrying the
+  // authoritative aiMessage + updated user/tasks/relationship. The client should
+  // treat `done`.aiMessage as authoritative and the deltas as a live preview.
+  app.post('/api/chat/stream', asyncHandler(async (req, res) => {
+    const userId = req.userId;
+    const text = sanitizeText(req.body?.text);
+
+    // Input safety + user/energy/persist all run BEFORE the SSE stream starts, so
+    // these can still be reported as normal JSON errors.
+    const safety = checkContentSafety(text);
+    if (!safety.safe) {
+      logger.warn('Blocked unsafe chat input', { userId, category: safety.category });
+      const message = safety.category === 'minor_protection'
+        ? '小希只想做你温暖的朋友哦，未成年的小朋友要健康快乐地长大呀，我们聊点轻松的话题吧~'
+        : '这个话题小希不太方便聊呢，我们换个轻松点的话题好不好？';
+      throw new AppError(400, 'CONTENT_BLOCKED', message);
+    }
+
+    const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
+    if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+    if (presence) presence.touch(userId);
+
+    const newEnergy = Math.max(10, user.energy - 2);
+    await dbRun('UPDATE users SET energy = ? WHERE id = ?', [newEnergy, userId]);
+    user.energy = newEnergy;
+
+    const userMsgId = generateId('user');
+    await dbRun(
+      'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "user", ?, "normal")',
+      [userMsgId, userId, text]
+    );
+    await incrementTask(userId, 'chat_3');
+    await incrementTask(userId, 'chat_total_50');
+    await recordFirstTime(userId, 'first_chat', {});
+    await recordEvent(userId, 'chat', {});
+
+    // Begin SSE. Past this point errors are sent as an `error` event (we can no
+    // longer throw — headers are already flushed).
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // tell nginx not to buffer the stream
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+    let aiResponse;
+    try {
+      aiResponse = await generateAiResponseStream(openai, user, userId, text, logger, (delta) => send('delta', { text: delta }));
+    } catch (error) {
+      logger.error('Streamed chat generation failed', { userId, error: error.message });
+      send('error', { message: '生成回复时出错了，请稍后再试。' });
+      res.end();
+      return;
+    }
+
+    try {
+      const aiMsgId = generateId('ai');
+      await dbRun(
+        'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, ?)',
+        [aiMsgId, userId, aiResponse.reply, aiResponse.emotion]
+      );
+
+      const updatedMood = Math.min(100, user.mood + aiResponse.mood_bump);
+      await dbRun('UPDATE users SET mood = ? WHERE id = ?', [updatedMood, userId]);
+      user.mood = updatedMood;
+
+      const prevLevel = user.level;
+      const affResult = await addAffection(userId, user, aiResponse.affection_bump + 1);
+      user.level = affResult.newLevel;
+      user.affection = affResult.newAffection;
+      await handleLevelProgress(userId, prevLevel, affResult.newLevel);
+
+      const formattedTasks = await loadFormattedTasks(userId);
+
+      const countRow = await dbGet('SELECT COUNT(*) as count FROM chat_messages WHERE user_id = ?', [userId]);
+      if (countRow && countRow.count > 0 && countRow.count % 5 === 0) {
+        if (!openai) {
+          await reflectAndConsolidate(userId);
+        } else {
+          reflectAndConsolidate(userId).catch((error) => {
+            logger.error('Background memory reflection trigger failed', { userId, error });
+          });
+        }
+      }
+
+      const relationship = await loadRelationshipProfile(userId);
+
+      send('done', {
+        aiMessage: createChatMessage(aiMsgId, 'ai', aiResponse.reply, { avatarState: aiResponse.emotion }),
+        replaced: Boolean(aiResponse.replaced),
+        user: serializeUser(user),
+        tasks: formattedTasks,
+        systemMessages: affResult.systemMessages,
+        relationship,
+      });
+      res.end();
+    } catch (error) {
+      logger.error('Streamed chat finalization failed', { userId, error: error.message });
+      send('error', { message: '保存回复时出错了。' });
+      res.end();
+    }
   }));
 
   app.post('/api/action/feed', asyncHandler(async (req, res) => {

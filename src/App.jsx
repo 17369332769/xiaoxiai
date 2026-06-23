@@ -131,6 +131,8 @@ function App() {
             isSendingMessage={store.isSendingMessage}
             isInteractionLocked={store.isSyncing}
             onRelationshipUpdateClick={focusRelationshipCard}
+            onPlayVoice={store.playVoice}
+            speakingMessageId={store.speakingMessageId}
           />
 
           {/* Action Menu (Shop items & Tasks) */}
