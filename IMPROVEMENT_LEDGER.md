@@ -36,7 +36,7 @@
 | # | 项 | 说明 | 状态 |
 |---|---|---|---|
 | P1-1 | 服务端流式 SSE 输出 | 现仅前端打字机模拟，首字延迟 = 整次 LLM 调用 | 🟢 **已完成**：后端 `POST /api/chat/stream`（SSE，`generateAiResponseStream` 纯文本流 + 服务端推导情绪/增量 + 输出安全兜底，原 /api/chat 保留）；前端 `postSse` 消费 SSE + `sendMessage` 真打字机（delta 实时占位 / done 权威替换 / error·截断兜底 / CRLF 归一），多 agent 交叉验证 + 补测 |
-| P1-2 | 语音能力（TTS 回复 / STT 输入） | 陪伴品类近乎刚需，当前完全没有 | 🟢 **TTS**：后端对接 RunningHub Index-TTS AI App（`/openapi/v2/run/ai-app/<id>` + nodeInfoList + 轮询 query），`.env` 按官方示例预填**开箱可用**，5 单测；前端每条回复 🔊 按钮 → `playVoice` → `/api/tts` 播放（方案 B 按需）。**STT**：ChatBox 🎤 按钮用浏览器 SpeechRecognition（免费）。待办：真实合成联调（消耗 RH 额度，待用户点头）+ 换自有音色样本（node 9） |
+| P1-2 | 语音能力（TTS 回复 / STT 输入） | 陪伴品类近乎刚需，当前完全没有 | 🟢 **TTS**：后端对接 RunningHub Index-TTS AI App（`/openapi/v2/run/ai-app/<id>` + nodeInfoList + 轮询 query），`.env` 按官方示例预填**开箱可用**，5 单测；前端每条回复 🔊 按钮 → `playVoice` → `/api/tts` 播放（方案 B 按需）。**STT**：ChatBox 🎤 按钮用浏览器 SpeechRecognition（免费）。**真实联调已通过**（2026-06-23：text→真实 FLAC 音频可达，但单次延迟 ~80s，逼近 90s `maxWaitMs`）。待办：换自有音色样本（node 9）+（可选）治理 ~80s 延迟/超时余量 |
 | P1-3 | 形象/换装系统 | 仅 3 张静态图；缺可永久收藏的变现点 | ⏸ |
 | P1-4 | 主动触达 / 召回 | 纯拉取式，无推送、无"想你了"定时消息 | ⏸ |
 | P1-5 | 玩法深化 | 约会剧情/分支/小游戏/纪念日 | ⏸ |
@@ -189,8 +189,9 @@
 - 2026-06-22 第10轮：补 `useGameStore.test.jsx` 3 例（allowSimulatedPayment 注入、hasGuestProgress 派生、AUTH_REQUIRED/401 自动降级游客恢复——锁定"会 wedge UI"的修复）。前端 51→54 例，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
 - 2026-06-22 第11轮：抽 `backend/envUtils.js`（`resolvePositiveIntEnv`）收敛 MEMORY_CAP/MEMORY_TTL_DAYS/AUTH_TOKEN_TTL_DAYS/CHAT_HISTORY_CAP 的重复解析（行为不变）+ 纯单测 `env-utils.test.js`。后端 98→101 例，`npm run verify` 全绿。
 - 2026-06-22 ⚠️ **更正**：第 9–11 轮记的"HEAD 8db8313/未提交"有误。reflog 显示在第 8 轮后又出现**第二次未经请求的提交** `d7ca7d9`（17:55，打包第 1–8 轮共 35 文件到 main）。我在第 6 轮后停止了 `git log` 复核（违背了自己 memory 里"每次都要查 git log"的规则），故未及时发现。真实当前状态：`HEAD=d7ca7d9`（含 1–8 轮），第 9–11 轮（envUtils/security-units/store 测试/env-utils 测试/README/本台账）共 10 个文件仍未提交。处置交由用户决定（保留并把剩余规整到分支 / 全部回退）。
-- 2026-06-23 语音特性：① SSE 流式后端 `/api/chat/stream`（+5 测）；② TTS 对接 RunningHub Index-TTS AI App（`tts.js`+`/api/tts`，按用户提供的官方文档 nodeInfoList 格式重写并 `.env` 预填开箱可用，+5 测）；③ 前端 🔊 语音播放（`playVoice`）+ 🎤 浏览器 STT。`npm run verify` 全绿（后端 131）。待办：TTS 真实联调、换自有音色。
+- 2026-06-23 语音特性：① SSE 流式后端 `/api/chat/stream`（+5 测）；② TTS 对接 RunningHub Index-TTS AI App（`tts.js`+`/api/tts`，按用户提供的官方文档 nodeInfoList 格式重写并 `.env` 预填开箱可用，+5 测）；③ 前端 🔊 语音播放（`playVoice`）+ 🎤 浏览器 STT。`npm run verify` 全绿（后端 131）。待办：换自有音色。
 - 2026-06-23 SSE 前端真打字机接入：新增 `src/utils/apiClient.js#postSse`（fetch + ReadableStream 解析 SSE、CRLF 归一、pre-stream JSON 错误走 parseApiResponse），重写 `useGameActions.sendMessage` 消费 `/api/chat/stream`（占位气泡 → delta 实时 → done 权威替换 → error/截断失败兜底），`ChatBox` 流式渲染（`streaming`/`streamed` 标记关掉客户端假打字机）。迁移 7 个 chat 测试至 SSE + 新增 多delta实时占位 / error 帧 / 截断流 / streamed 共 4 测；移除死导出 `replaceTemporaryChatMessage`。多 agent workflow 交叉验证发现并修复 3 处健壮性缺陷（done 后副作用抛错误报失败、缺 aiMessage 守卫、CRLF 帧卡死）。`npm run verify` 全绿（前端 58 / 后端 131），eslint 干净，构建通过。
+- 2026-06-23 TTS 真实联调（用户点头后跑了一次真实合成，消耗 RH 额度）：`synthesizeSpeech("你好呀，我是小希…" 20字)` → `ok:true`，返回真实音频 `https://rh-images-…cos.ap-beijing.myqcloud.com/.../ComfyUI_…flac`，HEAD 校验 HTTP 200 / `audio/x-flac` / 112498B（≈110KB）。**全链路（提交→轮询→取 URL→可播放）打通**。⚠️ 单次延迟 **80661ms**，逼近 `synthesizeSpeech` 默认 `maxWaitMs=90s`——队列再忙一点就会撞 `TTS_TIMEOUT`，且同步等 ~80s 体验差（单次采样，排队随负载波动）。用户决定：先不动、只记台账（不调超时/不提速/不缓存）。
 - 2026-06-22 第12轮：补 `backend/tests/analytics.test.js`（2 例：getStats 的 DAU/留存/付费转化/ARPPU 数值口径 + 无 NaN 不变量）——此前运营指标计算完全无直接测试。后端 101→103 例，`npm run verify` 全绿。当前 `HEAD=d7ca7d9`（已核 git log），11 文件未提交。
 - 2026-06-22 第13轮：补 `orders.test.js`（settle/refund 幂等、ORDER_NOT_REFUNDABLE/NOT_FOUND）+ `memory-store-units.test.js`（TTL 淘汰 + 上限驱逐，此前因 MEMORY_TTL_DAYS 默认关从未被执行）。后端 103→109 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，13 文件未提交。
   - 测试覆盖收尾小结（第 8–13 轮）：后端 84→109、前端 46→54。已直接覆盖此前未测的关键逻辑：resolveUser 鉴权判定、authThrottle 锁定、pruneUserChat 失败保护、AuthModal A6 两步确认+关闭重置、store 的 401 降级恢复/新增标志、getStats 指标口径、orders settle/refund 幂等、memory TTL 淘汰+上限驱逐、env 解析。
