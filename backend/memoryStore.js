@@ -1,18 +1,11 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { createLogger } from './logger.js';
+import { resolvePositiveIntEnv } from './envUtils.js';
 import { humanizeMemoryKey } from '../shared/memoryLabels.js';
 
 const logger = createLogger('memory-store');
 
 const DEFAULT_MEMORY_CAP = 20;
-
-// Resolve a positive integer from an env var, falling back to a default when the
-// value is missing, non-numeric, or non-positive so misconfiguration never
-// silently disables capping/validation.
-function resolvePositiveIntEnv(rawValue, fallback) {
-  const parsed = parseInt(rawValue, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 // Hard cap on long-term semantic memories per user. Beyond this, the lowest
 // priority (least reinforced, oldest) facts are evicted so the memory card stays
@@ -136,10 +129,7 @@ export async function enforceMemoryCap(userId, cap = MEMORY_CAP) {
 
 // Time-to-live for stale, never-reinforced memories, in days. Configurable via
 // the MEMORY_TTL_DAYS env var; 0 (the default) disables time-based expiry.
-export const MEMORY_TTL_DAYS = (() => {
-  const parsed = parseInt(process.env.MEMORY_TTL_DAYS, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-})();
+export const MEMORY_TTL_DAYS = resolvePositiveIntEnv(process.env.MEMORY_TTL_DAYS, 0);
 
 // Expire low-value stale memories: facts that were never reinforced (weight <= 1)
 // and have not been touched within the TTL window. High-weight memories are

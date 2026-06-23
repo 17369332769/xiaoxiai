@@ -1,6 +1,7 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { DAILY_TASK_IDS, DEFAULT_TASKS, getCheckinStreakReward } from './gameConfig.js';
 import { createLogger } from './logger.js';
+import { resolvePositiveIntEnv } from './envUtils.js';
 
 const logger = createLogger('gameplay');
 
@@ -15,10 +16,7 @@ export function getTodayKey() {
 // Per-user chat history cap so chat_messages can't grow without bound.
 // Configurable via CHAT_HISTORY_CAP; invalid/missing falls back to the default.
 const DEFAULT_CHAT_HISTORY_CAP = 300;
-export const CHAT_HISTORY_CAP = (() => {
-  const parsed = parseInt(process.env.CHAT_HISTORY_CAP, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CHAT_HISTORY_CAP;
-})();
+export const CHAT_HISTORY_CAP = resolvePositiveIntEnv(process.env.CHAT_HISTORY_CAP, DEFAULT_CHAT_HISTORY_CAP);
 
 // Keep only the newest `keep` chat rows for a user (sync renders the last 40 and
 // reflection reads the last 15, so the default leaves ample headroom). Called on

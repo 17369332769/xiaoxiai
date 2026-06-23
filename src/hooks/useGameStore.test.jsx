@@ -1114,4 +1114,91 @@ describe('useGameStore', () => {
     });
     expect(syncCalls).toBeGreaterThanOrEqual(2);
   });
+
+  test('exposes allowSimulatedPayment from sync and flags guest progress', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 3, affection: 25, energy: 80, mood: 70, coins: 456, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+          allowSimulatedPayment: true,
+        });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    expect(result.current.allowSimulatedPayment).toBe(true);
+    // Unbound guest at level 3 / non-default coins → has progress worth warning.
+    expect(result.current.hasGuestProgress).toBe(true);
+  });
+
+  test('defaults allowSimulatedPayment to false and reports no guest progress for a fresh profile', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          // Exactly the fresh-guest baseline; no allowSimulatedPayment field (older server).
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    expect(result.current.allowSimulatedPayment).toBe(false);
+    expect(result.current.hasGuestProgress).toBe(false);
+  });
+
+  test('recovers from an AUTH_REQUIRED sync by dropping the stale token and falling back to a guest', async () => {
+    try {
+      localStorage.setItem('xxa_user_id', 'bound_user_x');
+      localStorage.setItem('xxa_token', 'stale-token');
+    } catch { /* ignore */ }
+
+    let syncCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        syncCalls += 1;
+        if (syncCalls === 1) {
+          // Bound id + stale token → backend rejects with AUTH_REQUIRED (401).
+          return mockJsonResponse(
+            { ok: false, error: { code: 'AUTH_REQUIRED', message: '该身份已绑定账号，请登录后再操作' } },
+            false,
+            401
+          );
+        }
+        // After recovery rotates to a fresh guest id, this sync succeeds.
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+
+    // The recovery re-syncs as a guest; the second sync resolves the loading state.
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    expect(syncCalls).toBeGreaterThanOrEqual(2);
+    // Stale token cleared, account unbound, user prompted to re-login (not a wedge).
+    expect(localStorage.getItem('xxa_token')).toBe(null);
+    expect(result.current.account.bound).toBe(false);
+    expect(result.current.notifications.some((n) => n.title === '请重新登录')).toBe(true);
+    // No "backend down" error banner — this is an auth recovery, not a connection failure.
+    expect(result.current.syncError).toBe('');
+    expect(result.current.level).toBe(1);
+  });
 });

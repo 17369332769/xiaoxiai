@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { dbGet, dbRun } from './db.js';
 import { AppError } from './appError.js';
+import { resolvePositiveIntEnv } from './envUtils.js';
 
 const SCRYPT_KEYLEN = 64;
 
@@ -85,11 +86,7 @@ function base64url(input) {
 // or non-positive values fall back to the default so a leaked token cannot live
 // forever (the previous behavior).
 const DEFAULT_TOKEN_TTL_DAYS = 30;
-export const TOKEN_TTL_MS = (() => {
-  const days = parseInt(process.env.AUTH_TOKEN_TTL_DAYS, 10);
-  const resolved = Number.isFinite(days) && days > 0 ? days : DEFAULT_TOKEN_TTL_DAYS;
-  return resolved * 24 * 60 * 60 * 1000;
-})();
+export const TOKEN_TTL_MS = resolvePositiveIntEnv(process.env.AUTH_TOKEN_TTL_DAYS, DEFAULT_TOKEN_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
 // Compact signed token: base64url(payload).hmac, where payload carries an `exp`
 // timestamp. `ttlMs` is overridable (mainly for tests). A real deployment would

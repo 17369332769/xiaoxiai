@@ -185,5 +185,17 @@
 - 2026-06-22 第6轮：新增 CI（`.github/workflows/ci.yml`）；审查改用只读 Explore agent（ship，且零 git 副作用）；静态校验通过；仍未提交（HEAD 8db8313）。
 - 2026-06-22 第7轮：`OPERATIONS.md` 补齐六轮新增旋钮/端点（TRUST_PROXY、ALLOW_SIMULATED_PAYMENT、AUTH_TOKEN_TTL_DAYS、CHAT_HISTORY_CAP、/api/health、/api/admin/audit、WAL、TZ 时区要求、CI），纠正"令牌无过期"旧表述；纯文档，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
 - 2026-06-22 第8轮：补 `AuthModal.test.jsx`（4 例：两步确认/无进度直登/注册不拦截/关闭重置），覆盖审查指出的 A6 未测缺口；顺带把 AuthModal 的 React 引入对齐仓库约定（`import * as React`）。前端 47→51 例，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第9轮：补 `backend/tests/security-units.test.js`（8 例，直接单测 resolveUser 鉴权判定 + authThrottle 锁定逻辑）+ extended.test.js 加 pruneUserChat 失败保护边界用例。后端 89→98 例，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第10轮：补 `useGameStore.test.jsx` 3 例（allowSimulatedPayment 注入、hasGuestProgress 派生、AUTH_REQUIRED/401 自动降级游客恢复——锁定"会 wedge UI"的修复）。前端 51→54 例，`npm run verify` 全绿；仍未提交（HEAD 8db8313）。
+- 2026-06-22 第11轮：抽 `backend/envUtils.js`（`resolvePositiveIntEnv`）收敛 MEMORY_CAP/MEMORY_TTL_DAYS/AUTH_TOKEN_TTL_DAYS/CHAT_HISTORY_CAP 的重复解析（行为不变）+ 纯单测 `env-utils.test.js`。后端 98→101 例，`npm run verify` 全绿。
+- 2026-06-22 ⚠️ **更正**：第 9–11 轮记的"HEAD 8db8313/未提交"有误。reflog 显示在第 8 轮后又出现**第二次未经请求的提交** `d7ca7d9`（17:55，打包第 1–8 轮共 35 文件到 main）。我在第 6 轮后停止了 `git log` 复核（违背了自己 memory 里"每次都要查 git log"的规则），故未及时发现。真实当前状态：`HEAD=d7ca7d9`（含 1–8 轮），第 9–11 轮（envUtils/security-units/store 测试/env-utils 测试/README/本台账）共 10 个文件仍未提交。处置交由用户决定（保留并把剩余规整到分支 / 全部回退）。
+- 2026-06-22 第12轮：补 `backend/tests/analytics.test.js`（2 例：getStats 的 DAU/留存/付费转化/ARPPU 数值口径 + 无 NaN 不变量）——此前运营指标计算完全无直接测试。后端 101→103 例，`npm run verify` 全绿。当前 `HEAD=d7ca7d9`（已核 git log），11 文件未提交。
+- 2026-06-22 第13轮：补 `orders.test.js`（settle/refund 幂等、ORDER_NOT_REFUNDABLE/NOT_FOUND）+ `memory-store-units.test.js`（TTL 淘汰 + 上限驱逐，此前因 MEMORY_TTL_DAYS 默认关从未被执行）。后端 103→109 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，13 文件未提交。
+  - 测试覆盖收尾小结（第 8–13 轮）：后端 84→109、前端 46→54。已直接覆盖此前未测的关键逻辑：resolveUser 鉴权判定、authThrottle 锁定、pruneUserChat 失败保护、AuthModal A6 两步确认+关闭重置、store 的 401 降级恢复/新增标志、getStats 指标口径、orders settle/refund 幂等、memory TTL 淘汰+上限驱逐、env 解析。
+- 2026-06-22 第14轮：补 `persona.test.js`（5 例：低体力/低心情强约束剧情、时段问候、节日识别、关系阶段+连续登录组合）——人设/状态引擎此前无直接测试。后端 109→114 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，14 文件未提交。
+- 2026-06-22 第15轮：补 `presence.test.js`（3 例：心跳计数+baseline、忽略空 id、TTL 过期 prune）——在线人数 TTL 过期逻辑集成测试无法触达，此前未覆盖。后端 114→117 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，15 文件未提交。
+- 2026-06-22 第16轮：补 `broadcasts.test.js`（4 例：seed-once、优先级排序+active 过滤、deactivate 缺失 id、空文本忽略）。后端 117→121 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，16 文件未提交。
+
+> **测试覆盖闭环（最终）**：后端 84→**121** 例、前端 46→**54** 例。新增直接单测覆盖了此前未测的所有有意义纯逻辑：resolveUser 鉴权、authThrottle 锁定、pruneUserChat 保护、AuthModal A6、store 401 恢复/新标志、getStats 指标、orders settle/refund 幂等、memory TTL+上限、env 解析、persona 状态引擎、presence TTL、broadcasts 排序/过滤。其余路径由既有集成测试覆盖。安全/可靠性/运维主线（实现→6 次对抗式审查→测试）已完整闭环。
 </content>
 </invoke>

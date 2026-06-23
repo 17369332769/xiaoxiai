@@ -510,6 +510,22 @@ test('chat history is pruned to the retention cap, keeping the newest', async ()
   assert.ok(!rows.some((r) => r.id === 'prune-0'));
 });
 
+test('pruneUserChat is a fail-safe no-op for a non-positive cap or when under the cap', async () => {
+  const userId = 'chat_prune_guard_user';
+  await postJson('/api/user/sync', { userId }); // creates a welcome message row
+
+  // A non-positive cap must NEVER be read as "delete everything".
+  assert.equal(await gameplay.pruneUserChat(userId, 0), 0);
+  assert.equal(await gameplay.pruneUserChat(userId, -5), 0);
+
+  // A cap >= the current row count deletes nothing.
+  const before = (await dbModule.dbAll('SELECT id FROM chat_messages WHERE user_id = ?', [userId])).length;
+  assert.ok(before >= 1);
+  assert.equal(await gameplay.pruneUserChat(userId, before + 10), 0);
+  const after = (await dbModule.dbAll('SELECT id FROM chat_messages WHERE user_id = ?', [userId])).length;
+  assert.equal(after, before);
+});
+
 test('health endpoint reports DB connectivity without auth or CORS origin', async () => {
   const response = await fetch(`${baseUrl}/api/health`);
   assert.equal(response.status, 200);
