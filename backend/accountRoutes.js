@@ -6,9 +6,11 @@ import {
   createAccount,
   findAccountByIdentifier,
   findAccountByUserId,
+  incrementTokenVersion,
   issueToken,
   normalizeCredentials,
   verifyPassword,
+  verifyToken,
 } from './accounts.js';
 import { recordEvent } from './analytics.js';
 import { createLoginThrottle } from './authThrottle.js';
@@ -50,7 +52,7 @@ export function registerAccountRoutes(app, { authSecret }) {
     await recordEvent(guestUserId, 'account_register', { identifierType });
 
     sendJson(res, {
-      token: issueToken({ accountId: account.id, userId: account.user_id }, authSecret),
+      token: issueToken({ accountId: account.id, userId: account.user_id, tokenVersion: account.token_version }, authSecret),
       account: publicAccount(account),
     });
   }));
@@ -83,7 +85,7 @@ export function registerAccountRoutes(app, { authSecret }) {
     await recordEvent(account.user_id, 'account_login', {});
 
     sendJson(res, {
-      token: issueToken({ accountId: account.id, userId: account.user_id }, authSecret),
+      token: issueToken({ accountId: account.id, userId: account.user_id, tokenVersion: account.token_version }, authSecret),
       account: publicAccount(account),
     });
   }));
@@ -101,8 +103,48 @@ export function registerAccountRoutes(app, { authSecret }) {
     await recordEvent(guestUserId, 'account_bind', { identifierType });
 
     sendJson(res, {
-      token: issueToken({ accountId: account.id, userId: account.user_id }, authSecret),
+      token: issueToken({ accountId: account.id, userId: account.user_id, tokenVersion: account.token_version }, authSecret),
       account: publicAccount(account),
     });
+  }));
+
+  // Resolve the live account behind a Bearer token, or throw 401. Used by the
+  // refresh/logout endpoints (which aren't behind resolveUser). A token is only
+  // accepted if its `ver` still matches the account's token_version — a logged-out
+  // (revoked) token is treated as unauthenticated.
+  async function requireTokenAccount(req) {
+    const header = req.get('authorization') || '';
+    const m = /^Bearer\s+(.+)$/i.exec(header.trim());
+    const payload = m ? verifyToken(m[1], authSecret) : null;
+    if (!payload || !payload.accountId || typeof payload.userId !== 'string') {
+      throw new AppError(401, 'AUTH_REQUIRED', '登录状态已失效，请重新登录');
+    }
+    const account = await findAccountByUserId(payload.userId);
+    if (!account || account.id !== payload.accountId) {
+      throw new AppError(401, 'AUTH_REQUIRED', '登录状态已失效，请重新登录');
+    }
+    if (typeof payload.ver === 'number' && (account.token_version || 0) !== payload.ver) {
+      throw new AppError(401, 'AUTH_REQUIRED', '登录状态已失效，请重新登录');
+    }
+    return account;
+  }
+
+  // Rotate the token's expiry WITHOUT revoking other sessions: re-issue at the
+  // account's CURRENT token_version so the client can extend a still-valid login.
+  app.post('/api/auth/refresh', asyncHandler(async (req, res) => {
+    const account = await requireTokenAccount(req);
+    sendJson(res, {
+      token: issueToken({ accountId: account.id, userId: account.user_id, tokenVersion: account.token_version }, authSecret),
+      account: publicAccount(account),
+    });
+  }));
+
+  // Server-side logout: bump token_version so EVERY outstanding token for this
+  // account stops resolving (logout-everywhere / revoke a leaked token).
+  app.post('/api/auth/logout', asyncHandler(async (req, res) => {
+    const account = await requireTokenAccount(req);
+    await incrementTokenVersion(account.id);
+    await recordEvent(account.user_id, 'account_logout', {});
+    sendJson(res, {});
   }));
 }

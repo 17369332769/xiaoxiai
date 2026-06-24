@@ -6,15 +6,7 @@ import { getStats, loadRecentEvents } from './analytics.js';
 import { deactivateBroadcast, loadBroadcasts, pushBroadcast } from './broadcasts.js';
 import { refundOrder, serializeOrder } from './orders.js';
 import { loadAdminAudit, recordAdminAudit } from './adminAudit.js';
-import {
-  DAILY_TASKS,
-  GROWTH_TASKS,
-} from './gameConfig.js';
-import {
-  FOOD_ITEMS as FOOD_LIST,
-  GIFT_ITEMS as GIFT_LIST,
-  TIPPING_TIERS as TIP_LIST,
-} from '../shared/gameConfig.js';
+import { applyConfigOverrides, getConfigSnapshot } from './configOverrides.js';
 
 function clampLimit(value, fallback, max) {
   const n = parseInt(value, 10);
@@ -112,17 +104,25 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
     sendJson(res, { audit });
   }));
 
-  // Read-only snapshot of the live gameplay configuration (shop items, tiers,
-  // task catalog) so operators can review what players currently see.
+  // Live gameplay configuration with operator overrides applied (shop items,
+  // tipping tiers, task catalog). GET reads; POST writes overrides (or, with no
+  // `overrides` body, just reads — kept for backward compatibility).
+  app.get('/api/admin/config', asyncHandler(async (req, res) => {
+    sendJson(res, { config: getConfigSnapshot() });
+  }));
+
   app.post('/api/admin/config', asyncHandler(async (req, res) => {
-    sendJson(res, {
-      config: {
-        food: FOOD_LIST,
-        gifts: GIFT_LIST,
-        tippingTiers: TIP_LIST,
-        dailyTasks: DAILY_TASKS,
-        growthTasks: GROWTH_TASKS,
-      },
+    const overrides = req.body?.overrides;
+    if (overrides === undefined) {
+      sendJson(res, { config: getConfigSnapshot() });
+      return;
+    }
+    const applied = await applyConfigOverrides(overrides);
+    await recordAdminAudit('config_override', {
+      targetType: 'config',
+      detail: { applied },
+      ip: req.ip || null,
     });
+    sendJson(res, { config: getConfigSnapshot(), applied });
   }));
 }

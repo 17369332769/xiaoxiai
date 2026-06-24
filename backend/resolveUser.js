@@ -18,6 +18,19 @@ import { findAccountByUserId, verifyToken } from './accounts.js';
 // guest on that device still works, rather than hard-failing every request.
 const USER_ID_PATTERN = /^[a-zA-Z0-9_-]{4,64}$/;
 
+// True when a structurally-valid token has been revoked: the bound account still
+// exists but its token_version has moved past the token's `ver` (a logout bumped
+// it). Tokens without a numeric `ver` (pre-revocation legacy tokens) and tokens
+// whose account isn't a bound row are never treated as revoked here — that keeps
+// "a valid token is authoritative" intact and leaves account-existence checks to
+// the handlers (a deleted account's user row is gone, so they 404 anyway).
+async function isTokenRevoked(payload, tokenUserId) {
+  if (typeof payload.ver !== 'number') return false;
+  const account = await findAccountByUserId(tokenUserId);
+  if (!account) return false;
+  return (account.token_version || 0) !== payload.ver;
+}
+
 export function createResolveUser(authSecret) {
   return async (req, res, next) => {
     try {
@@ -27,13 +40,20 @@ export function createResolveUser(authSecret) {
         const payload = verifyToken(match[1], authSecret);
         const tokenUserId = payload && typeof payload.userId === 'string' ? payload.userId.trim() : '';
         if (tokenUserId && USER_ID_PATTERN.test(tokenUserId)) {
-          req.userId = tokenUserId;
-          req.accountId = payload.accountId || null;
-          req.isGuest = false;
-          next();
-          return;
+          // Server-side revocation: a token only resolves if its `ver` still
+          // matches the account's current token_version. Logout bumps the
+          // version, so older tokens stop here. Legacy tokens (no `ver`) and
+          // freshly-migrated accounts both sit at 0, so they keep working.
+          const revoked = await isTokenRevoked(payload, tokenUserId);
+          if (!revoked) {
+            req.userId = tokenUserId;
+            req.accountId = payload.accountId || null;
+            req.isGuest = false;
+            next();
+            return;
+          }
         }
-        // Invalid/expired/malformed token: fall through to body resolution (lenient).
+        // Invalid/expired/malformed/revoked token: fall through to body resolution (lenient).
       }
 
       // sanitizeUserId throws 400 INVALID_USER_ID on a missing/garbage id,

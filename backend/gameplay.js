@@ -1,6 +1,7 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { DAILY_TASK_IDS, DEFAULT_TASKS, getCheckinStreakReward } from './gameConfig.js';
 import { createLogger } from './logger.js';
+import { generateId } from './httpUtils.js';
 import { resolvePositiveIntEnv } from './envUtils.js';
 
 const logger = createLogger('gameplay');
@@ -179,7 +180,9 @@ export async function refundCoins(userId, amount) {
 }
 
 export async function recordTransaction(userId, { type, category, amount, balance, description }) {
-  const id = `txn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Collision-resistant id (random suffix) so two ledger writes in the same
+  // millisecond can't hit the transactions.id UNIQUE constraint.
+  const id = generateId('txn');
   try {
     await dbRun(
       'INSERT INTO transactions (id, user_id, type, category, amount, balance, description) VALUES (?, ?, ?, ?, ?, ?, ?)',

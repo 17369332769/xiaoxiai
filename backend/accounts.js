@@ -89,13 +89,26 @@ const DEFAULT_TOKEN_TTL_DAYS = 30;
 export const TOKEN_TTL_MS = resolvePositiveIntEnv(process.env.AUTH_TOKEN_TTL_DAYS, DEFAULT_TOKEN_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
 // Compact signed token: base64url(payload).hmac, where payload carries an `exp`
-// timestamp. `ttlMs` is overridable (mainly for tests). A real deployment would
-// additionally add refresh-token rotation.
-export function issueToken({ accountId, userId }, secret, ttlMs = TOKEN_TTL_MS) {
+// timestamp and a `ver` (the account's token_version at issue time). `ttlMs` is
+// overridable (mainly for tests). Server-side revocation works by bumping the
+// account's token_version: every token minted at an older `ver` stops resolving.
+export function issueToken({ accountId, userId, tokenVersion = 0 }, secret, ttlMs = TOKEN_TTL_MS) {
   const iat = Date.now();
-  const payload = base64url(JSON.stringify({ accountId, userId, iat, exp: iat + ttlMs }));
+  const payload = base64url(JSON.stringify({ accountId, userId, iat, exp: iat + ttlMs, ver: tokenVersion }));
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   return `${payload}.${sig}`;
+}
+
+// Bump an account's token_version, invalidating every outstanding token for it
+// (logout-everywhere). Returns the new version, or null if the account is gone.
+export async function incrementTokenVersion(accountId) {
+  const result = await dbRun(
+    'UPDATE accounts SET token_version = COALESCE(token_version, 0) + 1 WHERE id = ?',
+    [accountId]
+  );
+  if (!result.changes) return null;
+  const row = await dbGet('SELECT token_version FROM accounts WHERE id = ?', [accountId]);
+  return row ? row.token_version : null;
 }
 
 export function verifyToken(token, secret) {

@@ -1,5 +1,6 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { createLogger } from './logger.js';
+import { generateId } from './httpUtils.js';
 import { resolvePositiveIntEnv } from './envUtils.js';
 import { humanizeMemoryKey } from '../shared/memoryLabels.js';
 
@@ -104,6 +105,43 @@ export async function upsertMemory(userId, key, value) {
     [userId, entry.key, entry.value]
   );
   return true;
+}
+
+// Build the storage key for a user-authored memory. A caller-supplied topic is
+// kept (trimmed, bounded) so edits/upserts target it; otherwise a fresh unique
+// `note-…` key is minted so each manual note is its own entry.
+function buildMemoryKey(rawKey) {
+  if (typeof rawKey === 'string') {
+    const trimmed = rawKey.trim();
+    if (trimmed && trimmed.length <= MEMORY_KEY_MAX_LENGTH) return trimmed;
+  }
+  return generateId('note');
+}
+
+// User actively asks Xiaoxi to remember a fact ("让她记住 X"). Upserts under a
+// stable key and enforces the per-user cap. Returns the key on success, or null
+// when the value is too empty/invalid to store. Content screening is the route's
+// job (same split as the chat/tts flows).
+export async function addMemory(userId, value, rawKey) {
+  const key = buildMemoryKey(rawKey);
+  const ok = await upsertMemory(userId, key, value);
+  if (!ok) return null;
+  await enforceMemoryCap(userId);
+  return key;
+}
+
+// Edit an existing memory's value in place. Weight is intentionally preserved
+// (an edit is not reinforcement). Returns 'updated', 'not_found', or 'invalid'.
+export async function updateMemory(userId, key, value) {
+  const existing = await getMemory(userId, key);
+  if (!existing) return 'not_found';
+  const entry = sanitizeMemoryEntry(key, value);
+  if (!entry) return 'invalid';
+  await dbRun(
+    'UPDATE user_memories SET memory_value = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND memory_key = ?',
+    [entry.value, userId, key]
+  );
+  return 'updated';
 }
 
 // Evict everything beyond the cap, lowest priority first.

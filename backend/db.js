@@ -93,6 +93,9 @@ async function runColumnMigrations() {
   await addColumnIfMissing('users', 'last_login_date TEXT');
   await addColumnIfMissing('tasks', "category TEXT DEFAULT 'daily'");
   await addColumnIfMissing('user_memories', 'weight INTEGER DEFAULT 1');
+  // Server-side token revocation: bumping an account's token_version invalidates
+  // every token minted at an older version (logout-everywhere / refresh rotation).
+  await addColumnIfMissing('accounts', 'token_version INTEGER DEFAULT 0');
 }
 
 // Create tables if they do not exist
@@ -277,6 +280,16 @@ async function initializeTables() {
       )
     `);
     await dbRun('CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at)');
+
+    // 12. Config Overrides (operator-writable gameplay config: shop prices, tip
+    // tier coins) so商品 values can change at runtime without a redeploy.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS config_overrides (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     await runColumnMigrations();
 

@@ -31,6 +31,7 @@ export const MEMORY_LABELS = {
 // or new keys the model still invents). First match wins, so order from most to
 // least specific.
 const KEYWORD_LABELS = [
+  [/^note-|manual|reminder/, '我的备注'],
   [/drink|beverage|tea|coffee|milk_?tea/, '饮品'],
   [/food|eat|meal|snack|dish|cook|cuisine|hungry/, '饮食'],
   [/wish|want|desire|hope|dream|crave/, '小小心愿'],

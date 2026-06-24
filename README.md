@@ -229,9 +229,18 @@ npm run verify
 
 近期已完成一轮安全 / 可靠性 / 运维加固（鉴权强制、免费刷币堵漏、SQLite WAL+busy_timeout、登录防爆破、令牌过期、`trust proxy`、聊天记录保留上限、`/api/health` 健康检查、管理操作审计、GitHub Actions CI 等，均有测试覆盖）。逐项进度与结论见 [IMPROVEMENT_LEDGER.md](IMPROVEMENT_LEDGER.md)。
 
-待办（多数需产品 / 基建决策）：
+已交付（本轮，均有测试 + `npm run verify` 全绿）：
 
-- 合规基线：实名认证 + 青少年模式 + 第三方内容审核 API；隐私政策 / ToS；账号注销与数据导出
-- 接入真实微信 / 支付宝商户号（当前为模拟网关，业务流程已就绪）
-- 体验增强：服务端流式（SSE）、语音（TTS / STT）、形象换装、主动触达 / 召回、玩法剧情深化
-- 运营与可观测性：指标 / Sentry 接入、后台可写配置、会员订阅等付费结构
+- 服务端流式 SSE、语音 TTS（海螺 ~1s）+ 浏览器 STT
+- 令牌服务端吊销/刷新（`/api/auth/logout`、`/api/auth/refresh`）；登录二级标识锁（防换 IP 绕过）
+- 记忆主动添加/编辑（`/api/memory/add`、`/api/memory/update`）
+- 后台可写配置（`/api/admin/config` 改商品/打赏价即时生效，无需重部署）
+- 用户数据导出 / 账号注销（`/api/user/export`、`/api/user/delete`，后端）
+- SQLite 自动备份（`VACUUM INTO` + 保留轮换）
+
+待办（多数需产品 / 基建决策或外部资源）：
+
+- 合规基线：实名认证 + 青少年模式 + 第三方内容审核 API；隐私政策 / ToS 文档；导出/注销的前端入口
+- 接入真实微信 / 支付宝商户号（当前为模拟网关，业务流程已就绪）；海螺克隆音色（需样本）
+- 体验增强：形象换装、主动触达 / 召回、玩法剧情深化
+- 运营与可观测性：指标 / Sentry 接入、会员订阅等付费结构；多实例共享节流存储

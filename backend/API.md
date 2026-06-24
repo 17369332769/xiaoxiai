@@ -349,8 +349,15 @@ http://localhost:3000
 - `POST /api/auth/register`：`{ userId, identifier, password }`，把当前游客存档绑定到新账号。响应 `{ token, account }`。
 - `POST /api/auth/login`：`{ identifier, password }`。响应 `{ token, account }`，`account.userId` 为可用于跨设备同步的规范用户 ID。
 - `POST /api/auth/bind`：同 register，用于给已在游玩的游客补绑账号。
+- `POST /api/auth/refresh`：需 `Authorization: Bearer <token>`。续期一枚仍有效的令牌（不吊销其他设备），响应 `{ token, account }`；令牌缺失/失效返回 `AUTH_REQUIRED`。
+- `POST /api/auth/logout`：需 `Authorization: Bearer <token>`。服务端吊销——递增账号 `token_version`，使该账号**所有**未过期令牌立即失效（登出全部设备 / 吊销泄露令牌）。响应 `{ ok: true }`。
 
-`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）。`/api/auth/login` 对同一 标识+IP 的连续失败做锁定（默认 5 次失败后短时锁定，返回 `TOO_MANY_ATTEMPTS`）。
+`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）及 `ver`（账号 `token_version`，用于服务端吊销）。登录失败锁定为两级：同一 标识+IP（默认 5 次）与同一标识跨所有 IP（默认 10 次，防换 IP 绕过，env `LOGIN_THROTTLE_IDENTIFIER_*` 可调），命中返回 `TOO_MANY_ATTEMPTS`。
+
+## User Data（数据导出 / 注销，需登录）
+
+- `POST /api/user/export`：需登录令牌。导出该用户的全部数据 `{ export: { user, account, chatMessages, memories, tasks, relationshipEvents, transactions, orders, events } }`（账号信息不含口令哈希）。游客/未登录返回 `AUTH_REQUIRED`。
+- `POST /api/user/delete`：`{ confirm: true }` + 登录令牌。**不可逆**注销：顺序删除该用户在所有表的数据并写审计，响应 `{ removed: { <table>: <count> } }`。缺少 `confirm` 返回 `INVALID_PARAMETER`。
 
 ## Community（真实在线人数 / 广播）
 
@@ -360,6 +367,8 @@ http://localhost:3000
 ## Memory（长期记忆管理）
 
 - `POST /api/memory/list`：`{ userId }`。响应 `{ summary, memories: [{ key, value, weight, updatedAt }] }`。
+- `POST /api/memory/add`：`{ userId, text, key? }`。用户主动让小希记住一条事实（"记住 X"）；`key` 为可选主题，省略时自动生成独立备注。经内容安全过滤、受上限淘汰，响应最新 `memories`。失败码：`CONTENT_BLOCKED` / `TEXT_TOO_LONG` / `INVALID_PARAMETER`。
+- `POST /api/memory/update`：`{ userId, key, text }`。原地修改某条记忆内容（不累加 weight）。失败码：`MEMORY_NOT_FOUND` / `CONTENT_BLOCKED` / `TEXT_TOO_LONG`。
 - `POST /api/memory/delete`：`{ userId, key }`。删除一条记忆，响应最新 `memories`。
 - `POST /api/memory/clear`：`{ userId }`。清空全部记忆，响应 `{ cleared }`。
 
@@ -380,8 +389,9 @@ http://localhost:3000
 - `POST /api/admin/announcement`：`{ text, priority? }` 发布运营公告（写入广播）。
 - `POST /api/admin/announcement/deactivate`：`{ id }` 下架公告。
 - `POST /api/admin/order/refund`：`{ orderId }` 对已支付订单退款（幂等，扣回爱心币）。
-- `POST /api/admin/config`：只读返回当前商品 / 礼物 / 打赏档位 / 任务配置。
-- `POST /api/admin/audit`：`{ limit }` 查看管理操作审计日志（退款 / 公告发布 / 公告下架等，含动作、目标、IP、时间）。
+- `GET /api/admin/config`：返回当前商品 / 礼物 / 打赏档位 / 任务配置（已应用运营覆盖）。
+- `POST /api/admin/config`：`{ overrides: { "food:<id>:cost": <int>, "gift:<id>:cost": <int>, "tippingTier:<amount>:coins": <int> } }` 写入运营覆盖并写审计，**改后下次购买即生效**（无需重部署）；不带 `overrides` 时等价于只读返回配置（向后兼容）。键名或取值非法返回 `INVALID_OVERRIDE_KEY` / `INVALID_OVERRIDE_VALUE`。
+- `POST /api/admin/audit`：`{ limit }` 查看管理操作审计日志（退款 / 公告发布 / 公告下架 / 配置覆盖等，含动作、目标、IP、时间）。
 
 配套静态后台页面：`/admin.html`。
 

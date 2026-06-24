@@ -5,6 +5,8 @@ import { createOpenAiClient } from './aiRuntime.js';
 import { createLogger, logConfig } from './logger.js';
 import { dbReady } from './db.js';
 import { ensureSeedBroadcast } from './broadcasts.js';
+import { startBackupSchedule } from './backup.js';
+import { loadConfigOverrides } from './configOverrides.js';
 
 // Load environment variables
 dotenv.config();
@@ -79,9 +81,16 @@ const app = createApp({
   trustProxy: TRUST_PROXY,
 });
 
-// Seed a welcome broadcast once the database is ready (best-effort).
-dbReady.then(() => ensureSeedBroadcast()).catch((error) => {
-  logger.warn('Failed to seed default broadcast', { error: error.message });
+// Once the database is ready: seed a welcome broadcast and arm scheduled backups
+// (both best-effort; a failure here must not stop the server from serving).
+dbReady.then(async () => {
+  // Each step is independently best-effort: await with its own catch so one
+  // failure can't leave an unhandled rejection or skip the others.
+  await ensureSeedBroadcast().catch((error) => logger.warn('Failed to seed default broadcast', { error: error.message }));
+  startBackupSchedule();
+  await loadConfigOverrides().catch((error) => logger.warn('Failed to load config overrides', { error: error.message }));
+}).catch((error) => {
+  logger.warn('Post-startup init failed', { error: error.message });
 });
 
 export { app };

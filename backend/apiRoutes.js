@@ -1,6 +1,7 @@
 import { dbAll, dbGet, dbRun } from './db.js';
 import { AppError } from './appError.js';
-import { FOOD_ITEMS, GIFT_ITEMS, TASK_IDS, TIPPING_TIERS } from './gameConfig.js';
+import { TASK_IDS } from './gameConfig.js';
+import { getEffectiveFood, getEffectiveGifts, getEffectiveTippingTiers } from './configOverrides.js';
 import { asyncHandler, generateId, sanitizeText, sendJson, validateChoice } from './httpUtils.js';
 import {
   addAffection,
@@ -794,8 +795,9 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
   app.post('/api/action/feed', asyncHandler(async (req, res) => {
     const userId = req.userId;
-    const foodId = validateChoice(req.body?.foodId, Object.keys(FOOD_ITEMS), 'foodId');
-    const food = FOOD_ITEMS[foodId];
+    const foodItems = getEffectiveFood();
+    const foodId = validateChoice(req.body?.foodId, Object.keys(foodItems), 'foodId');
+    const food = foodItems[foodId];
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
@@ -860,8 +862,9 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
   app.post('/api/action/gift', asyncHandler(async (req, res) => {
     const userId = req.userId;
-    const giftId = validateChoice(req.body?.giftId, Object.keys(GIFT_ITEMS), 'giftId');
-    const gift = GIFT_ITEMS[giftId];
+    const giftItems = getEffectiveGifts();
+    const giftId = validateChoice(req.body?.giftId, Object.keys(giftItems), 'giftId');
+    const gift = giftItems[giftId];
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
@@ -938,7 +941,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     const userId = req.userId;
     const amount = String(req.body?.amount);
     const paymentMethod = validateChoice(req.body?.paymentMethod, ['wechat', 'alipay'], 'paymentMethod');
-    const tier = TIPPING_TIERS[String(amount)];
+    const tier = getEffectiveTippingTiers()[String(amount)];
     if (!tier) throw new AppError(400, 'INVALID_TIP_TIER', 'Invalid tip tier');
 
     // SECURITY: the instant tip mints coins with NO real payment, so it is a

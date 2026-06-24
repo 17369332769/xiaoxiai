@@ -40,8 +40,8 @@
 | P1-3 | 形象/换装系统 | 仅 3 张静态图；缺可永久收藏的变现点 | ⏸ |
 | P1-4 | 主动触达 / 召回 | 纯拉取式，无推送、无"想你了"定时消息 | ⏸ |
 | P1-5 | 玩法深化 | 约会剧情/分支/小游戏/纪念日 | ⏸ |
-| P1-6 | 记忆可主动编辑 | 现仅能删，不能"让她记住 X"/修改 | ⏸ |
-| P1-7 | 令牌过期/刷新/吊销 | 当前 token 无 exp、登出仅本地删 | ✅ 已加 exp+校验（A7）；刷新/服务端吊销仍 ⏸ |
+| P1-6 | 记忆可主动编辑 | 现仅能删，不能"让她记住 X"/修改 | 🟢 后端完成：`POST /api/memory/add`（"记住 X"，可选 topic key）+ `/api/memory/update`（原地改、weight 不累加），内容安全过滤 + cap 淘汰，6 集成测；前端 UI 待接 |
+| P1-7 | 令牌过期/刷新/吊销 | 当前 token 无 exp、登出仅本地删 | ✅ exp+校验（A7）+ `token_version` 服务端吊销：`/api/auth/logout`（吊销全部）/`/api/auth/refresh`（续期不吊销他端），resolveUser 校验 ver，legacy 无 ver 兼容，4 集成测 |
 | P1-8 | 注册验证 | 手机号/邮箱无 OTP，可注册任意号 | ⏸ |
 | P1-9 | 密码找回 | 无找回流程 | ⏸ |
 
@@ -50,12 +50,12 @@
 | # | 项 | 说明 | 状态 |
 |---|---|---|---|
 | P2-1 | 会员订阅/首充/限时礼包 | 仅一次性打赏档位 | ⏸ |
-| P2-2 | 后台可写配置 | 现 `/api/admin/config` 只读，商品/任务硬编码需重部署 | ⏸ |
+| P2-2 | 后台可写配置 | 现 `/api/admin/config` 只读，商品/任务硬编码需重部署 | 🟢 已完成：`config_overrides` 表 + 同步覆盖层（启动加载/写入刷新缓存），`GET/POST /api/admin/config` 校验+审计，商品/打赏价改后**下次购买即生效**无需重部署，7 测；任务奖励覆盖为文档化扩展点 |
 | P2-3 | 管理操作审计日志 | 退款等敏感操作无留痕 | ✅ 已做（C4，`admin_audit` + `/api/admin/audit`）|
 | P2-4 | 内容安全升级 | 现仅词表，需接入模型审核 + 实名/青少年模式（国内合规） | ⏸ |
-| P2-5 | 用户侧数据导出/注销 | 隐私合规缺口，无隐私政策/ToS | ⏸ |
+| P2-5 | 用户侧数据导出/注销 | 隐私合规缺口，无隐私政策/ToS | 🟢 后端完成：`POST /api/user/export`（全量数据，含账号但**不含口令哈希**）+ `/api/user/delete`（confirm 确认，顺序删 9 张表+审计），4 集成测；前端入口与隐私政策/ToS 文档待补 |
 | P2-6 | 可观测性 | 无 Sentry/指标/健康检查/CI | 🟡 health(C3)+CI 已做；指标/Sentry 仍 ⏸ |
-| P2-7 | 数据层 | SQLite 单写入，无自动备份代码 | ⏸ |
+| P2-7 | 数据层 | SQLite 单写入，无自动备份代码 | 🟢 自动备份完成：`backup.js` 用 `VACUUM INTO`（原子/WAL 安全）定时备份 + 保留轮换，env 可配/可禁用，timer `unref` 不挂测试，5 测；多写入扩容仍为后续 |
 | P2-8 | i18n | 仅中文 | ⏸ |
 
 ---
@@ -82,7 +82,7 @@
 | C3 | 中 | 无 `/health`、无指标、无 Sentry、无 CI | 全局缺失 | ✅ 第4轮 health；第6轮 CI（`.github/workflows/ci.yml` 跑 verify）；指标/Sentry 仍 ⏸ |
 | C4 | 中 | 退款/公告等管理操作无审计日志 | `adminRoutes.js:89` | ✅ 第3轮：`admin_audit` 表 + `adminAudit.js`，退款/公告发布/下架写入，`/api/admin/audit` 可查 |
 | B8 | 低 | 生产关闭模拟支付后，ShopModal 即时打赏/我已完成支付按钮成死路 | `src/components/ShopModal.jsx` | ✅ 第5轮：sync 透传 `allowSimulatedPayment`；关闭时隐藏即时打赏按钮、按订单有无回调隐藏"我已完成支付"，真实扫码升为主按钮 |
-| A2b | 低 | 防爆破仅 标识+IP，换 IP 可绕；`buckets` 超阈值才清扫 | `authThrottle.js` | ⏸（建议加纯标识维度二级锁；多实例需共享存储） |
+| A2b | 低 | 防爆破仅 标识+IP，换 IP 可绕；`buckets` 超阈值才清扫 | `authThrottle.js` | ✅ 加纯标识维度二级锁（跨 IP 锁定，env 可调阈值），两 Map 同步清扫，4 单测；多实例共享存储仍待（已注明） |
 
 **建议 P0 后的下一步顺序**：A1(已并入) → C2 SQLite 加固 → A2/A7 鉴权防爆破+token exp → A6 登录数据合并 → C1/C5 合规基线。
 
@@ -200,5 +200,29 @@
 - 2026-06-22 第16轮：补 `broadcasts.test.js`（4 例：seed-once、优先级排序+active 过滤、deactivate 缺失 id、空文本忽略）。后端 117→121 例，`npm run verify` 全绿。`HEAD=d7ca7d9`，16 文件未提交。
 
 > **测试覆盖闭环（最终）**：后端 84→**121** 例、前端 46→**54** 例。新增直接单测覆盖了此前未测的所有有意义纯逻辑：resolveUser 鉴权、authThrottle 锁定、pruneUserChat 保护、AuthModal A6、store 401 恢复/新标志、getStats 指标、orders settle/refund 幂等、memory TTL+上限、env 解析、persona 状态引擎、presence TTL、broadcasts 排序/过滤。其余路径由既有集成测试覆盖。安全/可靠性/运维主线（实现→6 次对抗式审查→测试）已完整闭环。
-</content>
-</invoke>
+
+## 第17轮交付（产品缺口批量补齐：P1-6/P1-7/P2-2/P2-5/P2-7 + A2b/txn-id）
+
+> 2026-06-24。用「只读设计 workflow（6 Explore agent 并行出文件级规格）→ 主循环实现 → 只读 Explore 审查 workflow」节奏，规避台账记录过的「审查子 agent 擅自 commit」风险。
+
+**新增文件**：`backend/backup.js`、`backend/configOverrides.js`、`backend/userExportDelete.js`、`backend/userRoutes.js`；测试 `tests/{authThrottle,backup,memory-mutations,auth-token,userExportDelete,configOverrides}.test.js`。
+**改动文件**：`db.js`（accounts.token_version 迁移 + config_overrides 表）、`accounts.js`（token 带 ver + incrementTokenVersion）、`resolveUser.js`（ver 吊销校验）、`accountRoutes.js`（refresh/logout + 传 ver）、`memoryStore.js`+`memoryRoutes.js`（add/update）、`shared/memoryLabels.js`（备注标签）、`authThrottle.js`（二级标识锁）、`gameplay.js`（txn id 用 generateId）、`apiRoutes.js`（购买走有效配置 getter）、`adminRoutes.js`（config GET/POST 可写）、`envUtils.js`（resolveNonNegativeIntEnv）、`server.js`（启动挂备份+加载覆盖）、`app.js`（注册 userRoutes）、`.env.example`（新 env）。
+
+**落地项**：
+- **P1-6** 记忆主动添加/编辑：`/api/memory/add`（"记住 X"，可选 topic key）+ `/api/memory/update`（原地改、weight 不累加），内容安全过滤 + cap 淘汰。
+- **P1-7** 令牌刷新/吊销：`token_version` 服务端吊销，`/api/auth/logout`（吊销全部）+ `/api/auth/refresh`（续期不吊销他端），legacy 无 ver 兼容。
+- **P2-2** 后台可写配置：`config_overrides` 表 + 同步覆盖层，商品/打赏价改后下次购买即生效，校验+审计。
+- **P2-5** 数据导出/注销：`/api/user/export`（不含口令哈希）+ `/api/user/delete`（confirm + 顺序删 9 表 + 审计，不包事务，尊重 A4 决策）。
+- **P2-7** 数据库自动备份：`VACUUM INTO` 定时备份 + 保留轮换，env 可配/可禁用。
+- **A2b**：登录二级标识锁（跨 IP）；**txn id** 改 `generateId('txn')`。
+
+**对抗式审查**（workflow#review，6 只读 Explore agent 并行）：P1-6/P2-5 零发现；采纳并修复 4 项（2 high 真 bug 我引入 + 1 high 不一致 + 1 防御）：
+- 🔴 server.js 启动 `ensureSeedBroadcast()/loadConfigOverrides()` 未 await → 未捕获 rejection 回归 → 改 async + 各自 catch；
+- 🔴 backup.js `keep` 用 `resolvePositiveIntEnv` 致 `DB_BACKUP_KEEP=0` 无法禁用 → 改 `resolveNonNegativeIntEnv` + 补 env 禁用测试；
+- 🟠 authThrottle `recordSuccess` 只清当前 IP（与"清跨设备失败史"注释矛盾）→ 清该标识全部 tier-1 桶 + 强化测试；
+- 🟡 `requireTokenAccount` 补 `payload.userId` 类型校验（对齐 resolveUser）。
+- ✖ 未采纳：logout 不检查 `incrementTokenVersion` 返回值——账号已删时 user 行同样不存在、token 无法越权（handler 404），且 logout 应幂等宽容。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **58** + 后端 **121→163**（+42）+ build。补装了被 npm 漏装的 `@rolldown/binding-linux-x64-gnu`（前端 test/build 的原生依赖，env 问题非代码）。前端顺手接了 `useGameStore` 的 `addMemory/updateMemory` hook + 登出时调用 `/api/auth/logout`。
+**待办**：P1-6/P2-5 的前端 UI 组件、隐私政策/ToS 文档；P2-2 任务奖励覆盖；多实例共享节流存储。
+**git**：实现与两个 workflow 均未提交，`HEAD` 仍为 `2db6228`（实现用主循环、设计/审查用只读 Explore，零 git 副作用）。处置交用户决定。

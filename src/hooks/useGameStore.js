@@ -343,6 +343,10 @@ export function useGameStore() {
   }, [submitAuth]);
 
   const logoutAccount = useCallback(() => {
+    // Best-effort server-side revocation (bumps token_version so the token can't
+    // be reused even if it leaked) before dropping the local token. Fire-and-
+    // forget: the local logout below must succeed regardless.
+    postJson('/api/auth/logout', {}).catch(() => { /* token already gone / offline */ });
     try {
       localStorage.removeItem('xxa_token');
       const freshId = `user_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString().slice(-4)}`;
@@ -385,6 +389,38 @@ export function useGameStore() {
       if (isAbortError(err) || !isMounted()) return false;
       logger.error('Failed to delete memory', { error: err });
       notify(err.message, 'error', '删除失败');
+      return false;
+    }
+  }, [userId, notify, isMounted]);
+
+  // User actively teaches Xiaoxi a fact ("让她记住 X"). `key` (topic) is optional.
+  const addMemory = useCallback(async (text, key) => {
+    if (!userId || !text?.trim()) return false;
+    try {
+      const data = await postJson('/api/memory/add', { userId, text: text.trim(), ...(key ? { key } : {}) });
+      if (!isMounted()) return false;
+      setMemories(Array.isArray(data.memories) ? data.memories : []);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to add memory', { error: err });
+      notify(err.message, 'error', '记不下来');
+      return false;
+    }
+  }, [userId, notify, isMounted]);
+
+  // Edit an existing memory's content in place.
+  const updateMemory = useCallback(async (key, text) => {
+    if (!userId || !key || !text?.trim()) return false;
+    try {
+      const data = await postJson('/api/memory/update', { userId, key, text: text.trim() });
+      if (!isMounted()) return false;
+      setMemories(Array.isArray(data.memories) ? data.memories : []);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to update memory', { error: err });
+      notify(err.message, 'error', '保存失败');
       return false;
     }
   }, [userId, notify, isMounted]);
@@ -493,6 +529,8 @@ export function useGameStore() {
     isLoadingMemories,
     loadMemories,
     deleteMemory,
+    addMemory,
+    updateMemory,
     clearMemories,
     playVoice,
     speakingMessageId,
