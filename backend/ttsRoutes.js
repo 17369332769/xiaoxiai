@@ -4,8 +4,8 @@ import { checkContentSafety } from './contentSafety.js';
 import { isTtsEnabled, synthesizeSpeech } from './tts.js';
 
 // On-demand text-to-speech for a chat reply. Authenticated (resolveUser) since
-// synthesis is an expensive async RunningHub workflow we don't want abused
-// anonymously. Returns { audioUrl } the client can play.
+// synthesis is a paid MiniMax call we don't want abused anonymously.
+// Returns { audioUrl } (a base64 data: URI) the client can play.
 export function registerTtsRoutes(app, { resolveUser }) {
   app.use('/api/tts', resolveUser);
 
@@ -15,7 +15,7 @@ export function registerTtsRoutes(app, { resolveUser }) {
     if (text.length > 500) throw new AppError(400, 'TEXT_TOO_LONG', 'text must be 500 characters or fewer');
 
     if (!isTtsEnabled()) {
-      throw new AppError(503, 'TTS_DISABLED', '语音合成未配置（需要 RunningHub 工作流配置）');
+      throw new AppError(503, 'TTS_DISABLED', '语音合成未配置（需要 MINIMAX_API_KEY）');
     }
 
     // Screen the text we're about to voice with the same content filter.

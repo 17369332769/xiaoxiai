@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 
 process.env.LOG_LEVEL = 'error';
 process.env.LOG_REQUESTS = 'false';
-process.env.RUNNINGHUB_API_KEY = 'test-key';
-process.env.RUNNINGHUB_TTS_ENDPOINT = 'https://www.runninghub.cn/openapi/v2/run/ai-app/APP1';
-process.env.RUNNINGHUB_TTS_QUERY_ENDPOINT = 'https://www.runninghub.cn/openapi/v2/query';
-process.env.RUNNINGHUB_TTS_TEXT_NODE_ID = '6';
-process.env.RUNNINGHUB_TTS_TEXT_FIELD = 'text';
-process.env.RUNNINGHUB_TTS_NODE_INFO = '[{"nodeId":"9","fieldName":"audio","fieldValue":"voice.mp3"},{"nodeId":"17","fieldName":"text","fieldValue":"温柔的"}]';
+process.env.MINIMAX_API_KEY = 'test-key';
+process.env.MINIMAX_TTS_HOST = 'https://api.minimaxi.com';
+process.env.MINIMAX_TTS_MODEL = 'speech-02-turbo';
+process.env.MINIMAX_TTS_VOICE_ID = 'female-tianmei';
+process.env.MINIMAX_TTS_FORMAT = 'mp3';
 
 const tts = await import('../tts.js');
 
@@ -17,64 +16,81 @@ test.after(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('isTtsEnabled requires both the apiKey and the run endpoint', () => {
+// "ID3" as hex — three bytes, lets us assert the hex→base64 decode is correct.
+const ID3_HEX = '494433';
+const ID3_BASE64 = Buffer.from('ID3').toString('base64');
+
+test('isTtsEnabled requires the api key', () => {
   assert.equal(tts.isTtsEnabled(), true);
-  const prev = process.env.RUNNINGHUB_TTS_ENDPOINT;
-  delete process.env.RUNNINGHUB_TTS_ENDPOINT;
+  const prev = process.env.MINIMAX_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   assert.equal(tts.isTtsEnabled(), false);
-  process.env.RUNNINGHUB_TTS_ENDPOINT = prev;
+  process.env.MINIMAX_API_KEY = prev;
 });
 
-test('synthesizeSpeech posts nodeInfoList (text + fixed voice nodes), polls, returns audio URL', async () => {
+test('synthesizeSpeech posts t2a_v2 and returns the audio as a base64 data: URI', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, headers: options.headers, body: JSON.parse(options.body) });
-    if (url.includes('/run/ai-app/')) {
-      return { json: async () => ({ taskId: 't1', status: 'RUNNING', results: null }) };
-    }
-    const queries = calls.filter((c) => c.url.includes('/openapi/v2/query')).length;
-    if (queries === 1) return { json: async () => ({ taskId: 't1', status: 'RUNNING', results: null }) };
-    return { json: async () => ({ taskId: 't1', status: 'SUCCESS', results: [{ url: 'https://cdn/voice.flac', nodeId: '4', outputType: 'flac', text: null }] }) };
+    return { json: async () => ({ data: { audio: ID3_HEX }, base_resp: { status_code: 0, status_msg: 'success' } }) };
   };
 
-  const result = await tts.synthesizeSpeech('你好呀', { pollIntervalMs: 5, maxWaitMs: 3000 });
+  const result = await tts.synthesizeSpeech('你好呀');
   assert.equal(result.ok, true);
-  assert.equal(result.audioUrl, 'https://cdn/voice.flac');
+  assert.equal(result.audioUrl, `data:audio/mpeg;base64,${ID3_BASE64}`);
 
-  const start = calls.find((c) => c.url.includes('/run/ai-app/'));
-  assert.equal(start.headers.Authorization, 'Bearer test-key');
-  // The reply text is injected at the text node, alongside the fixed voice nodes.
-  const textNode = start.body.nodeInfoList.find((n) => n.nodeId === '6');
-  assert.equal(textNode.fieldName, 'text');
-  assert.equal(textNode.fieldValue, '你好呀');
-  assert.ok(start.body.nodeInfoList.some((n) => n.nodeId === '9' && n.fieldValue === 'voice.mp3'));
-  assert.ok(start.body.nodeInfoList.some((n) => n.nodeId === '17'));
-  assert.equal(start.body.instanceType, 'default');
-
-  const query = calls.find((c) => c.url.includes('/openapi/v2/query'));
-  assert.equal(query.body.taskId, 't1');
-  assert.equal(query.headers.Authorization, 'Bearer test-key');
+  const call = calls[0];
+  assert.equal(call.url, 'https://api.minimaxi.com/v1/t2a_v2');
+  assert.equal(call.headers.Authorization, 'Bearer test-key');
+  assert.equal(call.body.model, 'speech-02-turbo');
+  assert.equal(call.body.text, '你好呀');
+  assert.equal(call.body.stream, false);
+  assert.equal(call.body.voice_setting.voice_id, 'female-tianmei');
+  assert.equal(call.body.audio_setting.format, 'mp3');
 });
 
-test('synthesizeSpeech returns the URL immediately on a synchronous SUCCESS', async () => {
-  globalThis.fetch = async () => ({ json: async () => ({ status: 'SUCCESS', results: [{ url: 'https://cdn/sync.wav', outputType: 'wav' }] }) });
-  const result = await tts.synthesizeSpeech('hi', { pollIntervalMs: 5, maxWaitMs: 1000 });
-  assert.equal(result.ok, true);
-  assert.equal(result.audioUrl, 'https://cdn/sync.wav');
+test('synthesizeSpeech includes emotion only when configured', async () => {
+  const prev = process.env.MINIMAX_TTS_EMOTION;
+  process.env.MINIMAX_TTS_EMOTION = 'happy';
+  let sent = null;
+  globalThis.fetch = async (_url, options) => {
+    sent = JSON.parse(options.body);
+    return { json: async () => ({ data: { audio: ID3_HEX }, base_resp: { status_code: 0 } }) };
+  };
+  await tts.synthesizeSpeech('嗯嗯');
+  assert.equal(sent.voice_setting.emotion, 'happy');
+  if (prev === undefined) delete process.env.MINIMAX_TTS_EMOTION;
+  else process.env.MINIMAX_TTS_EMOTION = prev;
 });
 
-test('synthesizeSpeech surfaces a FAILED task', async () => {
-  globalThis.fetch = async () => ({ json: async () => ({ status: 'FAILED', errorMessage: 'quota exceeded' }) });
-  const result = await tts.synthesizeSpeech('测试', { pollIntervalMs: 5, maxWaitMs: 1000 });
+test('synthesizeSpeech surfaces a non-zero base_resp status', async () => {
+  globalThis.fetch = async () => ({ json: async () => ({ base_resp: { status_code: 2049, status_msg: 'invalid api key' } }) });
+  const result = await tts.synthesizeSpeech('测试');
   assert.equal(result.ok, false);
-  assert.match(result.error, /quota exceeded/);
+  assert.match(result.error, /invalid api key/);
 });
 
-test('synthesizeSpeech returns TTS_NOT_CONFIGURED when the endpoint is unset', async () => {
-  const prev = process.env.RUNNINGHUB_TTS_ENDPOINT;
-  delete process.env.RUNNINGHUB_TTS_ENDPOINT;
+test('synthesizeSpeech reports NO_AUDIO_OUTPUT when the success payload has no audio', async () => {
+  globalThis.fetch = async () => ({ json: async () => ({ data: {}, base_resp: { status_code: 0 } }) });
+  const result = await tts.synthesizeSpeech('hi');
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'NO_AUDIO_OUTPUT');
+});
+
+test('synthesizeSpeech rejects empty text without calling the API', async () => {
+  let called = false;
+  globalThis.fetch = async () => { called = true; return { json: async () => ({}) }; };
+  const result = await tts.synthesizeSpeech('   ');
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'EMPTY_TEXT');
+  assert.equal(called, false);
+});
+
+test('synthesizeSpeech returns TTS_NOT_CONFIGURED when the key is unset', async () => {
+  const prev = process.env.MINIMAX_API_KEY;
+  delete process.env.MINIMAX_API_KEY;
   const result = await tts.synthesizeSpeech('hi');
   assert.equal(result.ok, false);
   assert.equal(result.error, 'TTS_NOT_CONFIGURED');
-  process.env.RUNNINGHUB_TTS_ENDPOINT = prev;
+  process.env.MINIMAX_API_KEY = prev;
 });
