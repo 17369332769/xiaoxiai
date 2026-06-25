@@ -196,6 +196,26 @@ const LLM_TIMEOUT_MS = 15000;
 // until the token limit" stall its docs warn about from burning the full timeout —
 // our replies are a small JSON object, so this is comfortably above what we need.
 const LLM_MAX_TOKENS = 512;
+
+// The local fallback (and constrained-state) replies are produced whole, with no
+// token stream. Chunk them out with a small gap so the SSE path gives the same
+// progressive typewriter UX as the real LLM stream — otherwise the entire reply
+// arrives in one delta frame and the client appears to "snap" to the full text.
+// Gap is configurable via LOCAL_STREAM_GAP_MS (0 disables the pacing).
+const LOCAL_STREAM_GAP_MS = (() => {
+  const n = Number(process.env.LOCAL_STREAM_GAP_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 24;
+})();
+async function emitLocalReplyInChunks(reply, emit) {
+  const textValue = String(reply || '');
+  for (let i = 0; i < textValue.length; i += 2) {
+    emit(textValue.slice(i, i + 2));
+    if (LOCAL_STREAM_GAP_MS > 0 && i + 2 < textValue.length) {
+      await new Promise((resolve) => setTimeout(resolve, LOCAL_STREAM_GAP_MS));
+    }
+  }
+}
+
 // Max number of model<->tool round-trips in a single user turn. Each round is one
 // chat-completion call; the model may answer (no tool call) at any round. Bounds the
 // tool loop. Worst case for a turn that keeps requesting tools is MAX_TOOL_ROUNDS
@@ -464,7 +484,7 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
   const emit = typeof onDelta === 'function' ? onDelta : () => {};
   const constrained = getStateConstrainedReply(user);
   if (constrained && user.energy <= 15) {
-    emit(constrained.reply);
+    await emitLocalReplyInChunks(constrained.reply, emit);
     return { ...constrained, replaced: false };
   }
 
@@ -475,7 +495,7 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
 
   if (!openai) {
     const local = constrained || getLocalAIResponse(text, { user, memories });
-    emit(local.reply);
+    await emitLocalReplyInChunks(local.reply, emit);
     return { ...local, replaced: false };
   }
 
@@ -524,7 +544,7 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
   } catch (llmError) {
     logger.warn('Streaming LLM failed; falling back to local dialog engine', { userId, error: llmError.message });
     const local = constrained || getLocalAIResponse(text, { user, memories });
-    emit(local.reply);
+    await emitLocalReplyInChunks(local.reply, emit);
     return { ...local, replaced: false };
   }
 }
