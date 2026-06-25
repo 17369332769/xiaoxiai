@@ -1,4 +1,22 @@
 import { getRelationshipTier } from './gameConfig.js';
+import { resolvePositiveIntEnv } from './envUtils.js';
+
+// Proactive recall: greet a returning user after a meaningful absence. The
+// threshold is configurable via RECALL_MIN_AWAY_HOURS (default 6h). Returns a
+// warmth-tiered greeting string, or null when the gap is too short to bother.
+const RECALL_MIN_AWAY_MS = resolvePositiveIntEnv(process.env.RECALL_MIN_AWAY_HOURS, 6) * 60 * 60 * 1000;
+
+export function getRecallGreeting(awayMs) {
+  if (!Number.isFinite(awayMs) || awayMs < RECALL_MIN_AWAY_MS) return null;
+  const days = Math.floor(awayMs / (24 * 60 * 60 * 1000));
+  if (days >= 3) {
+    return `呜…你终于回来啦，${days} 天没见到你，小希都快把脸埋进被子里偷偷想你了。以后不许消失这么久啦~ (眼眶微微泛红，扑进你怀里)`;
+  }
+  if (days >= 1) {
+    return '好久不见呀…这一天天的你都去忙什么啦？小希一直在等你回来呢，看到你的瞬间心都软啦~ (小跑过来拉住你的手)';
+  }
+  return '你回来啦~ 这几个小时小希一直在偷偷想你，现在终于把你盼回来了，要多陪陪我哦。(歪着头甜甜地笑)';
+}
 
 // Solar-calendar festivals (lunar festivals are intentionally omitted to avoid a
 // lunar-conversion dependency). Keyed by `MM-DD`.

@@ -92,3 +92,87 @@ export function getRelationshipTier(level) {
   }
   return current;
 }
+
+// Cosmetic visual themes ("换装 / 主题换肤"). Each theme overrides a fixed set of
+// CSS custom properties at runtime to reskin the whole UI. The `default` theme is
+// free and mirrors the base :root palette (equipping it restores the original look).
+export const THEMES = [
+  {
+    id: 'default', name: '默认 · 甜粉', cost: 0, icon: '🌷',
+    desc: '小希最初的甜粉夜色，温柔如初见。',
+    vars: {
+      '--primary-pink': '#ff7597',
+      '--primary-pink-hover': '#ff5e85',
+      '--secondary-purple': '#c084fc',
+      '--accent-gold': '#ffd269',
+      '--bg-gradient': 'linear-gradient(135deg, #120a1c 0%, #1c0e2a 50%, #0d0615 100%)',
+      '--text-pink': '#ffa3b8',
+      '--panel-bg': 'rgba(26, 17, 36, 0.65)',
+      '--panel-border': 'rgba(255, 117, 151, 0.15)',
+    },
+  },
+  {
+    id: 'starry', name: '星空 · 夜', cost: 600, icon: '🌌',
+    desc: '深邃夜空与星河微光，浪漫而宁静。',
+    vars: {
+      '--primary-pink': '#7aa2ff',
+      '--primary-pink-hover': '#5b86f0',
+      '--secondary-purple': '#b39dff',
+      '--accent-gold': '#ffe08a',
+      '--bg-gradient': 'linear-gradient(135deg, #0a0f1f 0%, #0e1530 50%, #060a18 100%)',
+      '--text-pink': '#aec3ff',
+      '--panel-bg': 'rgba(16, 22, 44, 0.7)',
+      '--panel-border': 'rgba(122, 162, 255, 0.18)',
+    },
+  },
+  {
+    id: 'sakura', name: '樱花 · 春', cost: 600, icon: '🌸',
+    desc: '满树樱粉随风轻舞，少女心满溢。',
+    vars: {
+      '--primary-pink': '#ff8fb3',
+      '--primary-pink-hover': '#ff749f',
+      '--secondary-purple': '#e6a8d8',
+      '--accent-gold': '#ffd089',
+      '--bg-gradient': 'linear-gradient(135deg, #2a1822 0%, #3a2030 50%, #1f1018 100%)',
+      '--text-pink': '#ffc2d6',
+      '--panel-bg': 'rgba(48, 28, 40, 0.65)',
+      '--panel-border': 'rgba(255, 143, 179, 0.2)',
+    },
+  },
+  {
+    id: 'ocean', name: '海洋 · 蓝', cost: 800, icon: '🌊',
+    desc: '清澈海蓝与薄荷青，沁凉又治愈。',
+    vars: {
+      '--primary-pink': '#38d6c0',
+      '--primary-pink-hover': '#1fc4ad',
+      '--secondary-purple': '#5ec8e8',
+      '--accent-gold': '#ffd66e',
+      '--bg-gradient': 'linear-gradient(135deg, #061a1f 0%, #0a2630 50%, #04141a 100%)',
+      '--text-pink': '#8fe3d8',
+      '--panel-bg': 'rgba(10, 32, 38, 0.66)',
+      '--panel-border': 'rgba(56, 214, 192, 0.18)',
+    },
+  },
+  {
+    id: 'aurora', name: '极光 · 绿', cost: 800, icon: '🌲',
+    desc: '森野极光流转，清新而梦幻。',
+    vars: {
+      '--primary-pink': '#6ee7a0',
+      '--primary-pink-hover': '#44d486',
+      '--secondary-purple': '#9d8bff',
+      '--accent-gold': '#ffe07a',
+      '--bg-gradient': 'linear-gradient(135deg, #08160f 0%, #0d2418 50%, #05110b 100%)',
+      '--text-pink': '#a7f0c4',
+      '--panel-bg': 'rgba(12, 30, 22, 0.66)',
+      '--panel-border': 'rgba(110, 231, 160, 0.18)',
+    },
+  },
+];
+
+export const DEFAULT_THEME_ID = 'default';
+export const THEME_IDS = THEMES.map((t) => t.id);
+export const FREE_THEME_IDS = THEMES.filter((t) => t.cost === 0).map((t) => t.id);
+
+export function getThemeById(id) {
+  return THEMES.find((t) => t.id === id) || null;
+}

@@ -346,11 +346,13 @@ http://localhost:3000
 
 ## Accounts（正式账号体系 / 游客绑定）
 
-- `POST /api/auth/register`：`{ userId, identifier, password }`，把当前游客存档绑定到新账号。响应 `{ token, account }`。
+- `POST /api/auth/register`：`{ userId, identifier, password }`（当 `REQUIRE_REGISTRATION_OTP` 开启时还需 `code` 验证码），把当前游客存档绑定到新账号。响应 `{ token, account }`；验证码无效返回 `INVALID_CODE`。
 - `POST /api/auth/login`：`{ identifier, password }`。响应 `{ token, account }`，`account.userId` 为可用于跨设备同步的规范用户 ID。
 - `POST /api/auth/bind`：同 register，用于给已在游玩的游客补绑账号。
 - `POST /api/auth/refresh`：需 `Authorization: Bearer <token>`。续期一枚仍有效的令牌（不吊销其他设备），响应 `{ token, account }`；令牌缺失/失效返回 `AUTH_REQUIRED`。
 - `POST /api/auth/logout`：需 `Authorization: Bearer <token>`。服务端吊销——递增账号 `token_version`，使该账号**所有**未过期令牌立即失效（登出全部设备 / 吊销泄露令牌）。响应 `{ ok: true }`。
+- `POST /api/auth/request-code`：`{ identifier, purpose }`（`purpose` 为 `register` 或 `reset`）。下发验证码（当前为服务端日志开发桩，接真实短信/邮件见 `verification.js`）。`register` 若账号已存在返回 `ACCOUNT_EXISTS`；`reset` 始终返回通用 `{ ok: true }`（仅对已存在账号实际发送，防账号枚举）。冷却期内重复请求返回 `CODE_COOLDOWN`。开启 `OTP_DEV_ECHO` 时响应附带 `devCode`（仅供开发，生产务必关闭）。
+- `POST /api/auth/reset-password`：`{ identifier, code, password }`。校验 `reset` 验证码后重置密码，并吊销该账号所有旧会话（递增 `token_version`），响应 `{ token, account }`（重置后直接登录）。验证码无效/过期返回 `INVALID_CODE`。
 
 `identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）及 `ver`（账号 `token_version`，用于服务端吊销）。登录失败锁定为两级：同一 标识+IP（默认 5 次）与同一标识跨所有 IP（默认 10 次，防换 IP 绕过，env `LOGIN_THROTTLE_IDENTIFIER_*` 可调），命中返回 `TOO_MANY_ATTEMPTS`。
 
@@ -358,6 +360,12 @@ http://localhost:3000
 
 - `POST /api/user/export`：需登录令牌。导出该用户的全部数据 `{ export: { user, account, chatMessages, memories, tasks, relationshipEvents, transactions, orders, events } }`（账号信息不含口令哈希）。游客/未登录返回 `AUTH_REQUIRED`。
 - `POST /api/user/delete`：`{ confirm: true }` + 登录令牌。**不可逆**注销：顺序删除该用户在所有表的数据并写审计，响应 `{ removed: { <table>: <count> } }`。缺少 `confirm` 返回 `INVALID_PARAMETER`。
+
+## Themes（形象换装 / 主题换肤）
+
+- `POST /api/themes`：`{ userId }`。响应 `{ catalog: [{ id, name, cost, icon, desc, vars }], owned: [id], equipped }`。免费主题（`cost=0`，如 `default`）所有人默认拥有。
+- `POST /api/themes/unlock`：`{ userId, themeId }`。用爱心币解锁主题（原子扣币 + 流水），成功后**自动装备**。响应 `{ owned, equipped, coins }`。失败码：`INVALID_THEME` / `THEME_FREE`（免费无需解锁）/ `THEME_OWNED`（已拥有）/ `INSUFFICIENT_COINS`。并发双击同一主题不会双扣（INSERT 作闸门，重复则退款）。
+- `POST /api/themes/equip`：`{ userId, themeId }`。装备一个已拥有（或免费）的主题。响应 `{ owned, equipped }`。未拥有返回 `THEME_NOT_OWNED`。
 
 ## Community（真实在线人数 / 广播）
 
@@ -390,7 +398,7 @@ http://localhost:3000
 - `POST /api/admin/announcement/deactivate`：`{ id }` 下架公告。
 - `POST /api/admin/order/refund`：`{ orderId }` 对已支付订单退款（幂等，扣回爱心币）。
 - `GET /api/admin/config`：返回当前商品 / 礼物 / 打赏档位 / 任务配置（已应用运营覆盖）。
-- `POST /api/admin/config`：`{ overrides: { "food:<id>:cost": <int>, "gift:<id>:cost": <int>, "tippingTier:<amount>:coins": <int> } }` 写入运营覆盖并写审计，**改后下次购买即生效**（无需重部署）；不带 `overrides` 时等价于只读返回配置（向后兼容）。键名或取值非法返回 `INVALID_OVERRIDE_KEY` / `INVALID_OVERRIDE_VALUE`。
+- `POST /api/admin/config`：`{ overrides: { "food:<id>:cost": <int>, "gift:<id>:cost": <int>, "tippingTier:<amount>:coins": <int>, "task:<id>:reward": <int> } }` 写入运营覆盖并写审计，**改后下次购买即生效**（任务奖励为**下次 sync 即生效**，无需重部署）；不带 `overrides` 时等价于只读返回配置（向后兼容）。键名或取值非法返回 `INVALID_OVERRIDE_KEY` / `INVALID_OVERRIDE_VALUE`。
 - `POST /api/admin/audit`：`{ limit }` 查看管理操作审计日志（退款 / 公告发布 / 公告下架 / 配置覆盖等，含动作、目标、IP、时间）。
 
 配套静态后台页面：`/admin.html`。

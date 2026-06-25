@@ -76,6 +76,31 @@ test('POST rejects an unknown override key', async () => {
   assert.equal(res.body.error.code, 'INVALID_OVERRIDE_KEY');
 });
 
+test('POST /api/admin/config can override a task reward (takes effect on next sync)', async () => {
+  const res = await req('POST', '/api/admin/config', { overrides: { 'task:checkin:reward': 500 } }, ADMIN);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.applied['task:checkin:reward'].to, 500);
+  // The admin snapshot and the effective getter both reflect the new reward.
+  const checkin = res.body.config.dailyTasks.find((t) => t.id === 'checkin');
+  assert.equal(checkin.reward, 500, 'snapshot reflects the task reward override');
+  assert.equal(
+    configOverrides.getEffectiveTasks().find((t) => t.id === 'checkin').reward,
+    500
+  );
+
+  // A user's sync seeds the overridden reward into their per-user task row.
+  const sync = await req('POST', '/api/user/sync', { userId: 'cfg_task_user_1' });
+  assert.equal(sync.status, 200);
+  const userCheckin = sync.body.tasks.find((t) => t.id === 'checkin');
+  assert.equal(userCheckin.reward, 500, 'the synced user gets the overridden reward');
+});
+
+test('POST rejects an unknown task id reward override', async () => {
+  const res = await req('POST', '/api/admin/config', { overrides: { 'task:nonesuch:reward': 100 } }, ADMIN);
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error.code, 'INVALID_OVERRIDE_KEY');
+});
+
 test('POST rejects a non-positive value', async () => {
   const res = await req('POST', '/api/admin/config', { overrides: { 'food:coffee:cost': -5 } }, ADMIN);
   assert.equal(res.status, 400);

@@ -9,6 +9,7 @@ export default function ActionMenu({
   openTipping,
   openWallet,
   openMemory,
+  openTheme,
   openAuth,
   checkinStreak = 0,
   accountBound = false,
@@ -149,6 +150,12 @@ export default function ActionMenu({
           <button onClick={openMemory} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">📔</span>
             <span>小希的记忆</span>
+          </button>
+
+          {/* Theme / Wardrobe Button */}
+          <button onClick={openTheme} className="btn-secondary action-btn" disabled={isInteractionLocked}>
+            <span className="action-icon">🎀</span>
+            <span>形象换装</span>
           </button>
 
           {/* Account Center Button */}

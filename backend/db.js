@@ -96,6 +96,10 @@ async function runColumnMigrations() {
   // Server-side token revocation: bumping an account's token_version invalidates
   // every token minted at an older version (logout-everywhere / refresh rotation).
   await addColumnIfMissing('accounts', 'token_version INTEGER DEFAULT 0');
+  // Cosmetic theme system: the user's currently equipped theme (null = default).
+  await addColumnIfMissing('users', 'equipped_theme TEXT');
+  // Proactive recall: the last sync time (ms epoch), to greet returning users.
+  await addColumnIfMissing('users', 'last_seen INTEGER');
 }
 
 // Create tables if they do not exist
@@ -288,6 +292,28 @@ async function initializeTables() {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS verification_codes (
+        identifier TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (identifier, purpose)
+      )
+    `);
+
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS user_themes (
+        user_id TEXT NOT NULL,
+        theme_id TEXT NOT NULL,
+        acquired_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, theme_id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
       )
     `);
 

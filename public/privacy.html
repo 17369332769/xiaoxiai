@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>隐私政策 · 小希 AI</title>
+  <style>
+    :root { --pink: #ff7597; --gold: #ffd269; --muted: #9ca3af; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px 16px; background: #14111c; color: #e7e3ef;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.75; font-size: 15px;
+    }
+    main { max-width: 760px; margin: 0 auto; }
+    h1 { color: var(--pink); font-size: 26px; margin-bottom: 4px; }
+    h2 { color: var(--pink); font-size: 18px; margin-top: 32px; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: 6px; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .tpl-banner {
+      background: rgba(255, 210, 105, .12); border: 1px solid var(--gold); color: var(--gold);
+      padding: 12px 16px; border-radius: 10px; font-size: 13px; margin: 18px 0 8px;
+    }
+    a { color: var(--pink); }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 16px; }
+    .back { display: inline-block; margin-bottom: 20px; color: var(--muted); text-decoration: none; }
+  </style>
+</head>
+<body>
+<main>
+  <a class="back" href="/">← 返回小希</a>
+  <h1>隐私政策</h1>
+  <p class="meta">最近更新：2026 年 6 月 · 适用产品：小希 AI 温柔女友版（xiaoxiai.com）</p>
+
+  <div class="tpl-banner">
+    ⚠️ 本文为<strong>示例模板</strong>，用于说明产品当前的数据处理方式，<strong>正式上线前必须经法务审核并按真实运营主体定制</strong>（补充公司名称、备案号、数据出境、第三方厂商清单与联系方式等）。
+  </div>
+
+  <h2>1. 引言</h2>
+  <p>本政策说明小希 AI（以下简称“本服务”）如何收集、使用、存储、共享与保护你的个人信息。使用本服务即表示你已阅读并理解本政策。</p>
+
+  <h2>2. 我们收集的信息</h2>
+  <ul>
+    <li><strong>游客标识</strong>：首次进入时在你的浏览器本地（localStorage）生成的匿名 <code>userId</code>，用于保存进度。</li>
+    <li><strong>账号信息</strong>：若你注册正式账号，包含你提供的标识（手机号 / 邮箱 / 用户名）与口令（仅以 scrypt 哈希存储，绝不保存明文）。</li>
+    <li><strong>对话与互动数据</strong>：你与小希的聊天内容、长期记忆摘要，以及成长数据（羁绊等级、好感度、体力、心情、爱心币、任务与签到记录）。</li>
+    <li><strong>交易数据</strong>：爱心币流水、充值 / 打赏订单记录。</li>
+    <li><strong>行为与日志</strong>：用于运营分析的行为埋点（如首次对话、签到、付费等事件），以及服务端访问日志（含 IP、时间），用于安全风控与限流。</li>
+  </ul>
+
+  <h2>3. 我们如何使用信息</h2>
+  <ul>
+    <li>提供 AI 对话陪伴、维持你的成长与互动体验；</li>
+    <li>生成与维护“长期记忆”，让陪伴更连续；</li>
+    <li>结算虚拟消费、发放奖励与处理订单；</li>
+    <li>进行内容安全过滤、防滥用与限流；</li>
+    <li>以汇总、去标识方式分析运营指标（如活跃、留存、付费转化）。</li>
+  </ul>
+
+  <h2>4. 第三方处理者</h2>
+  <p>为实现核心功能，必要数据会传输给以下类型的第三方服务（具体厂商以正式版披露为准）：</p>
+  <ul>
+    <li><strong>大模型服务</strong>（兼容 OpenAI 接口）：用于生成对话回复与记忆提炼，会接收必要的对话上下文。</li>
+    <li><strong>语音合成（TTS）</strong>：当你点击朗读时，会将该条文本发送给语音合成服务以生成音频。</li>
+    <li><strong>联网搜索</strong>：当模型判断需要实时信息时，会就该问题调用第三方搜索服务。</li>
+    <li><strong>支付网关</strong>：充值 / 打赏时用于下单与回调验签的必要订单信息。</li>
+  </ul>
+  <p>除上述为实现功能所必需、法律法规要求或经你同意外，我们不会向第三方出售你的个人信息。</p>
+
+  <h2>5. 存储与安全</h2>
+  <p>数据存储于服务端数据库（当前为 SQLite，启用 WAL 与定时备份）。登录采用 HMAC 签名令牌并支持服务端吊销 / 续期；口令以 scrypt 加盐哈希保存；接口具备限流与登录防爆破。请注意：没有任何系统可保证绝对安全。</p>
+
+  <h2>6. 你的权利</h2>
+  <ul>
+    <li><strong>数据导出</strong>：登录后可在「账号中心 → 数据与隐私」一键导出你的全部数据（JSON）。</li>
+    <li><strong>账号注销</strong>：登录后可在同一处永久注销账号，届时将删除你的资料、聊天、记忆、账单等全部记录，且不可恢复。</li>
+    <li><strong>记忆管理</strong>：可在「记忆」中查看、添加、修改与删除小希记住的事实。</li>
+  </ul>
+
+  <h2>7. 本地存储（Cookie / localStorage）</h2>
+  <p>本服务使用浏览器本地存储保存你的 <code>userId</code> 与登录令牌，以维持登录态与进度。清除浏览器数据会使游客身份与登录态丢失。</p>
+
+  <h2>8. 未成年人保护</h2>
+  <p>本服务面向成年人。若你是未成年人，请在监护人指导下使用，并避免任何虚拟消费。正式上线版本将提供实名校验与青少年模式（建设中）。</p>
+
+  <h2>9. 政策更新</h2>
+  <p>我们可能不时更新本政策。重大变更将通过站内提示等方式告知。</p>
+
+  <h2>10. 联系我们</h2>
+  <p>如对本政策或你的数据有任何疑问，请通过正式版公布的渠道联系我们（示例：privacy@xiaoxiai.example）。</p>
+
+  <footer>
+    另见《<a href="/terms.html">服务条款</a>》。本页为产品示例模板，不构成正式法律文件。
+  </footer>
+</main>
+</body>
+</html>

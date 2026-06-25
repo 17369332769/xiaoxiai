@@ -41,7 +41,7 @@
 | P1-4 | 主动触达 / 召回 | 纯拉取式，无推送、无"想你了"定时消息 | ⏸ |
 | P1-5 | 玩法深化 | 约会剧情/分支/小游戏/纪念日 | ⏸ |
 | P1-6 | 记忆可主动编辑 | 现仅能删，不能"让她记住 X"/修改 | 🟢 后端完成：`POST /api/memory/add`（"记住 X"，可选 topic key）+ `/api/memory/update`（原地改、weight 不累加），内容安全过滤 + cap 淘汰，6 集成测；前端 UI 待接 |
-| P1-7 | 令牌过期/刷新/吊销 | 当前 token 无 exp、登出仅本地删 | ✅ exp+校验（A7）+ `token_version` 服务端吊销：`/api/auth/logout`（吊销全部）/`/api/auth/refresh`（续期不吊销他端），resolveUser 校验 ver，legacy 无 ver 兼容，4 集成测 |
+| P1-7 | 令牌过期/刷新/吊销 | 当前 token 无 exp、登出仅本地删 | ✅ exp+校验（A7）+ `token_version` 服务端吊销：`/api/auth/logout`（吊销全部）/`/api/auth/refresh`（续期不吊销他端），resolveUser 校验 ver，legacy 无 ver 兼容，4 集成测；**前端已接**（第18轮）：登录态确认绑定后自动 `/api/auth/refresh` 续期 effect（每 12h），长开标签页不再静默掉登录 |
 | P1-8 | 注册验证 | 手机号/邮箱无 OTP，可注册任意号 | ⏸ |
 | P1-9 | 密码找回 | 无找回流程 | ⏸ |
 
@@ -50,10 +50,10 @@
 | # | 项 | 说明 | 状态 |
 |---|---|---|---|
 | P2-1 | 会员订阅/首充/限时礼包 | 仅一次性打赏档位 | ⏸ |
-| P2-2 | 后台可写配置 | 现 `/api/admin/config` 只读，商品/任务硬编码需重部署 | 🟢 已完成：`config_overrides` 表 + 同步覆盖层（启动加载/写入刷新缓存），`GET/POST /api/admin/config` 校验+审计，商品/打赏价改后**下次购买即生效**无需重部署，7 测；任务奖励覆盖为文档化扩展点 |
+| P2-2 | 后台可写配置 | 现 `/api/admin/config` 只读，商品/任务硬编码需重部署 | 🟢 已完成：`config_overrides` 表 + 同步覆盖层（启动加载/写入刷新缓存），`GET/POST /api/admin/config` 校验+审计，商品/打赏价改后**下次购买即生效**无需重部署，9 测；**任务奖励也已可覆盖**（`task:<id>:reward`，下次 sync 即生效，第18轮）|
 | P2-3 | 管理操作审计日志 | 退款等敏感操作无留痕 | ✅ 已做（C4，`admin_audit` + `/api/admin/audit`）|
 | P2-4 | 内容安全升级 | 现仅词表，需接入模型审核 + 实名/青少年模式（国内合规） | ⏸ |
-| P2-5 | 用户侧数据导出/注销 | 隐私合规缺口，无隐私政策/ToS | 🟢 后端完成：`POST /api/user/export`（全量数据，含账号但**不含口令哈希**）+ `/api/user/delete`（confirm 确认，顺序删 9 张表+审计），4 集成测；前端入口与隐私政策/ToS 文档待补 |
+| P2-5 | 用户侧数据导出/注销 | 隐私合规缺口，无隐私政策/ToS | 🟢 后端完成：`POST /api/user/export`（全量数据，含账号但**不含口令哈希**）+ `/api/user/delete`（confirm 确认，顺序删 9 张表+审计），4 集成测；**前端已接**（第18轮）：AuthModal「数据与隐私」区——导出我的数据（JSON 下载）/ 二步确认永久注销（清本地 + 轮换新游客）；隐私政策/ToS 文档待补 |
 | P2-6 | 可观测性 | 无 Sentry/指标/健康检查/CI | 🟡 health(C3)+CI 已做；指标/Sentry 仍 ⏸ |
 | P2-7 | 数据层 | SQLite 单写入，无自动备份代码 | 🟢 自动备份完成：`backup.js` 用 `VACUUM INTO`（原子/WAL 安全）定时备份 + 保留轮换，env 可配/可禁用，timer `unref` 不挂测试，5 测；多写入扩容仍为后续 |
 | P2-8 | i18n | 仅中文 | ⏸ |
@@ -226,3 +226,80 @@
 **验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **58** + 后端 **121→163**（+42）+ build。补装了被 npm 漏装的 `@rolldown/binding-linux-x64-gnu`（前端 test/build 的原生依赖，env 问题非代码）。前端顺手接了 `useGameStore` 的 `addMemory/updateMemory` hook + 登出时调用 `/api/auth/logout`。
 **待办**：P1-6/P2-5 的前端 UI 组件、隐私政策/ToS 文档；P2-2 任务奖励覆盖；多实例共享节流存储。
 **git**：实现与两个 workflow 均未提交，`HEAD` 仍为 `2db6228`（实现用主循环、设计/审查用只读 Explore，零 git 副作用）。处置交用户决定。
+
+## 第18轮交付（产品缺口前端接入：P2-5 导出/注销 UI + P1-7 令牌自动续期）
+
+> 2026-06-25。沿用「只读 Explore 理解 workflow（5 agent 并行映射）→ 主循环实现 → 测试」节奏，零 git 副作用。把第17轮「后端已就绪、前端待接」的两项做成可用闭环。
+
+**新增文件**：`src/utils/download.js`（浏览器 Blob+anchor JSON 下载，缺 URL API 时安全降级）+ `src/utils/download.test.js`（2 例）。
+**改动文件**：`src/hooks/useGameStore.js`（`refreshAuthToken` + 登录态刷新 effect、`exportUserData`、`deleteAccount`，全部 return 暴露）、`src/components/AuthModal.jsx`（登录态新增「数据与隐私」区：导出 JSON + 二步确认注销，`handleClose` 同时复位 `confirmingDelete`）、`src/App.jsx`（透传 `exportUserData`/`deleteAccount`）；测试 `useGameStore.test.jsx`（+3）、`AuthModal.test.jsx`（+3）。
+
+**落地项**：
+- **P2-5 前端**：「导出我的数据（JSON）」→ `/api/user/export` → 浏览器下载；「注销账号」二步确认 → `/api/user/delete {confirm:true}` → 清本地 token + 轮换为新游客 id（避免删号后 401 循环）。
+- **P1-7 前端**：`account.bound` 确认后自动 `/api/auth/refresh`（不吊销他端）+ 每 12h 续期；游客（bound=false）永不刷新；死 token 仍由 sync 的 401→游客路径兜底。
+- **P2-2 任务奖励覆盖**（补全）：`configOverrides` 新增 `task:<id>:reward` 键 + `getEffectiveTasks()`，`ensureUserTasks` 改用有效任务 → 后台改任务奖励**下次 sync 即生效**；`getConfigSnapshot` 同步反映，校验同其它覆盖项。
+- **隐私政策 / ToS 模板 + 入口**：`public/privacy.html` + `public/terms.html`（中文示例模板，内容贴合实际数据实践——SQLite/HMAC 令牌/scrypt/大模型/海螺 TTS/博查搜索/支付/记忆/埋点，顶部明确标注「示例模板，上线前需法务审核」）；入口接入页脚（全员可见）、注册页同意提示、账号中心「数据与隐私」区；构建产物 `dist/` 已含两页。补 1 例 AuthModal 链接测试。
+
+**对抗式审查**（workflow，3 只读 Explore agent）：前端 store / 后端 config 均 **ship（0 发现）**；UI/测试维度提出 6 项，采纳并修复 4 项——download.js 改 try/finally 保证异常路径也 `revokeObjectURL`；收紧导出测试断言（校验成功文案）；补「导出失败 null 不重复 notify」「删除失败保持 armed 可一键重试」「click 抛错仍 revoke」测试。1 项标「critical」（删除失败不复位 confirmingDelete）**核实为误报**：失败时警告 div 仍渲染、与 A6 登录确认同构、默认态仍需两步确认，非安全洞——保留行为并加注释 + 失败路径测试固化意图。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **70** + 后端 **165** + build，EXIT 0。新增前端 12 例（store 3 / AuthModal 6 / download 3）+ 后端 2 例（任务奖励覆盖）全绿。
+
+**待办（均需外部决策/资源，不宜擅自实现）**：隐私政策 / ToS 已出**示例模板**（需法务审核后启用）；OTP 注册验证 / 密码找回（需短信/邮件基建）；实名认证 + 青少年模式 + 三方内容审核（合规，需厂商+法务）；真实微信/支付宝商户号（业务流程已就绪）；换装 / 主动召回 / 玩法深化 / 会员订阅（需产品方向）；多实例共享节流存储（需 Redis 类基建）；A9 清 git 历史中的 `database.sqlite`（推公开仓库前，需 force-push 决策）。
+**git**：均未提交（实现走主循环、理解走只读 Explore，零 git 副作用），处置交用户决定。
+
+## 第19轮交付（P1-8 注册验证码 OTP + P1-9 密码找回）
+
+> 2026-06-25。共享验证码基础设施 + 端点 + 前端流程；env 门控保证向后兼容；审查走只读 Explore，零 git 副作用。
+
+**新增文件**：`backend/verification.js`（验证码生成/sha256 哈希/存储/常数时间校验 + 可插拔发送桩）、`backend/tests/verification.test.js`（7 例）。
+**改动文件（后端）**：`db.js`（`verification_codes` 表）、`accounts.js`（`resetAccountPassword`：重置并吊销旧会话）、`accountRoutes.js`（`/api/auth/request-code` + `/api/auth/reset-password` + register OTP 门控）、`apiRoutes.js`（sync 暴露 `requireRegistrationOtp`）、`.env.example`（OTP 旋钮）。
+**改动文件（前端）**：`useGameStore.js`（`requestAuthCode` / `resetPassword` / registerAccount 带 code / 读 `requireRegistrationOtp`）、`AuthModal.jsx`（忘记密码重置视图 + 门控注册验证码字段 + 状态复位）、`App.jsx`（透传）；测试 store +4 / AuthModal +2。
+
+**落地项**：
+- **P1-8 注册 OTP**：`request-code(register)` 下发验证码，register 在 `REQUIRE_REGISTRATION_OTP=true` 时强制校验；默认关 → 注册流程与既有测试完全不变（`node --test` 按文件进程隔离，门控 env 仅在 OTP 测试进程内开启）。
+- **P1-9 密码找回**：`request-code(reset)`（防账号枚举：始终通用 ok，仅对已存在账号实际发送）→ `reset-password`（校验码 → 重置 → 吊销旧会话 → 返回新 token 直接登录）。
+- 安全：验证码 sha256 存储 + 常数时间比较、10 分钟过期、5 次错误锁定、60s 重发冷却；`OTP_DEV_ECHO`（默认关）仅开发回显；发送为日志桩，真实短信/邮件留 `sendVerificationCode` 接口。
+
+**对抗式审查**（workflow，3 只读 Explore agent）：**后端安全 = ship（0 发现，判定 production-ready）**；前端 5 项 / 测试 5 项。采纳并修复：前端重置提交双提交守卫（`submitting`）、`switchTab` + 忘记密码链接清 `password`/`code`（防跨上下文残留）、`handleSendCode` 加 `authPending` 守卫；补后端「5 次错误后锁定」brute-force 测试。**驳回 1 项「high」**（建议 `handleClose` 清 `password`）——会破坏既有「关闭后重新武装确认」测试且与该测试 validated 的有意行为冲突（密码跨关闭保留 + 重开再武装），真正隐患（重置视图带入登录密码）已由「进入重置时清空」覆盖。其余测试缺口（过期路径需真实计时）记为可接受。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **76** + 后端 **172** + build，EXIT 0。
+
+**待办（均需外部决策/资源）**：实名认证 + 青少年模式 + 三方内容审核（合规，需厂商+法务）；隐私政策 / ToS 正式法务文本（已出模板）；真实微信/支付宝商户号（流程已就绪）；换装 / 主动召回 / 玩法深化 / 会员订阅（需产品方向）；Sentry / 指标；多实例共享节流存储（需 Redis）；A9 清 git 历史中的 `database.sqlite`（推公开仓库前，需 force-push 决策）。
+**git**：均未提交，处置交用户决定。
+
+## 第20轮交付（产品玩法：形象换装 · 主题换肤）
+
+> 2026-06-25。用户选定「形象换装」；受限于仅 3 张固定立绘，实现为**主题换肤**（运行时改 CSS 变量重塑全局配色），服务端持久化跨设备同步，复用现有经济系统。
+
+**新增文件**：`backend/themeStore.js`（拥有/装备/解锁逻辑）、`backend/themeRoutes.js`（3 端点）、`backend/tests/themes.test.js`（8 例）、`src/components/ThemeModal.jsx`（+ `ThemeModal.test.jsx` 3 例）。
+**改动文件**：`shared/gameConfig.js`（`THEMES` 5 套主题，每套同一组 CSS 变量键）、`db.js`（`user_themes` 表 + `users.equipped_theme` 列）、`apiRoutes.js`（sync 暴露 `themes`）、`app.js`（注册 themeRoutes）、`userExportDelete.js`（注销级联删 `user_themes`）、`useGameStore.js`（主题 state + loadThemes/unlockTheme/equipTheme + 运行时应用 CSS 变量 effect）、`App.jsx` + `ActionMenu.jsx`（「形象换装」入口）；store 测试 +3。
+
+**落地项**：
+- 5 套主题（默认甜粉 / 星空夜 / 樱花春 / 海洋蓝 / 极光绿），默认免费、其余爱心币解锁；`/api/themes`（目录+拥有+装备）、`/api/themes/unlock`（原子扣币+流水，自动装备）、`/api/themes/equip`。
+- 运行时换肤：每套主题覆盖同一组 8 个 CSS 变量（accent/背景渐变/面板等），切换即 `document.documentElement.style.setProperty`，装备默认主题完全还原。
+- 经济安全：解锁用「扣币 → INSERT 作闸门 → 并发重复则退款」，绝不双扣（实现时主动加固，审查确认 race-safe）。
+
+**对抗式审查**（workflow，2 只读 Explore agent）：经济/并发/校验/SQL/迁移**全部判定 solid**。采纳修复：
+- 🔴（high）注销未级联删 `user_themes`（违反「注销删除全部用户数据」）→ 加入 `USER_CHILD_TABLES` + 补级联删除测试；
+- 🟠（medium×2）`unlockTheme`/`equipTheme` 对畸形响应的 `: []` 兜底会清空 owned → 改函数式 `prev` 保留；
+- 🟡（low）登出/注销/401 即时复位主题（消除旧主题闪烁）。
+- 驳回：全局 `PRAGMA foreign_keys=ON`（风险大、可能破坏现有删除流程；显式级联已解决孤儿问题）；themeId 改 validateChoice（`getThemeById` 已校验，非 bug）。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **82** + 后端 **180** + build，EXIT 0。
+
+**git**：均未提交，处置交用户决定。
+
+## 第21轮交付（产品玩法：主动召回 · 回归问候）
+
+> 2026-06-25。用户选定再做一个玩法 → 主动召回（无需外部资源、贴合人设引擎）。**纯后端实现，前端零改动**（召回消息随 sync 的 chatHistory 自动展示）。
+
+**新增文件**：`backend/tests/recall.test.js`（4 例）。
+**改动文件**：`backend/personaEngine.js`（`getRecallGreeting`：按离开时长分 <1天 / 1-3天 / 3+天 三档问候，阈值 `RECALL_MIN_AWAY_HOURS` 默认 6h）、`backend/db.js`（`users.last_seen INTEGER` 列）、`backend/apiRoutes.js`（sync 检测离开时长 → 注入召回 AI 消息 + 写 `recall_greeting` 埋点 + 更新 last_seen）、`.env.example`。
+
+**落地项**：返回用户（非新用户、距上次 sync 超阈值）在 sync 时被注入一条暖心"想你了 / 好久不见"AI 消息，随 chatHistory 自动展示；阈值内 / 新用户不触发；last_seen 每次 sync 更新，同次返回不重复触发。
+
+**审查**（只读 Explore 单 agent）：**无真实 bug**。核实新用户守卫、last_seen 必更新、召回入 chatHistory、不误触 5 条反思、负/NaN/NULL last_seen 边界（`<阈值` + `Number.isFinite` 双重兜底）、day 取整、无 lint 问题均正确。
+
+**验证**：`npm run verify` 全绿——前端 **82** + 后端 **184** + build，EXIT 0。
+
+**git**：均未提交，处置交用户决定。

@@ -3,6 +3,8 @@ import { AppError } from './appError.js';
 import { TASK_IDS } from './gameConfig.js';
 import { getEffectiveFood, getEffectiveGifts, getEffectiveTippingTiers } from './configOverrides.js';
 import { asyncHandler, generateId, sanitizeText, sendJson, validateChoice } from './httpUtils.js';
+import { REQUIRE_REGISTRATION_OTP } from './verification.js';
+import { getUserThemeState } from './themeStore.js';
 import {
   addAffection,
   computeCheckinStreak,
@@ -24,7 +26,7 @@ import { loadRelationshipProfile, reflectAndConsolidate } from './memoryEngine.j
 import { getLocalAIResponse } from './aiRuntime.js';
 import { executeSkill, getEnabledSkills, getSkillsPromptBlock } from './skills/registry.js';
 import { checkContentSafety } from './contentSafety.js';
-import { buildPersonaContext, getStateConstrainedReply } from './personaEngine.js';
+import { buildPersonaContext, getStateConstrainedReply, getRecallGreeting } from './personaEngine.js';
 import { recordDailyActive, recordEvent, recordFirstTime } from './analytics.js';
 import { pushBroadcast } from './broadcasts.js';
 import { createOrder, settleOrder } from './orders.js';
@@ -575,6 +577,24 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     // chat_messages count that drives the reflection trigger). Best-effort.
     await pruneUserChat(userId).catch((error) => logger.warn('Chat history prune failed', { userId, error: error.message }));
 
+    // Proactive recall: a returning user (not brand-new) who has been away long
+    // enough gets a warm "missed you" greeting prepended to their history. Then
+    // stamp last_seen so the same return can't re-trigger it.
+    const nowMs = Date.now();
+    const lastSeenMs = Number.isFinite(user.last_seen) ? user.last_seen : null;
+    if (!isNewUser && lastSeenMs !== null) {
+      const recall = getRecallGreeting(nowMs - lastSeenMs);
+      if (recall) {
+        const recallId = generateId('ai-recall');
+        await dbRun(
+          'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "happy")',
+          [recallId, userId, recall]
+        );
+        await recordEvent(userId, 'recall_greeting', {});
+      }
+    }
+    await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [nowMs, userId]);
+
     const chatHistory = await dbAll(
       'SELECT id, sender, text, avatar_state as avatarState, strftime("%H:%M", created_at, "localtime") as timestamp FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 40',
       [userId]
@@ -595,6 +615,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     const formattedTasks = await loadFormattedTasks(userId);
     const relationship = await loadRelationshipProfile(userId);
     const account = await findAccountByUserId(userId);
+    const themeState = await getUserThemeState(userId);
 
     sendJson(res, {
       user: serializeUser(user, {
@@ -612,6 +633,10 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
       // Lets the client hide demo-only payment affordances (instant tip /
       // replayable callback) that would fail when simulated payment is off.
       allowSimulatedPayment,
+      // Whether registration requires an OTP code (off by default); drives the
+      // register form's verification-code field.
+      requireRegistrationOtp: REQUIRE_REGISTRATION_OTP,
+      themes: themeState,
     });
   }));
 

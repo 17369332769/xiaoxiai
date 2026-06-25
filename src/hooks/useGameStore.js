@@ -3,6 +3,8 @@ import {
   FOOD_ITEMS,
   GIFT_ITEMS,
   TIPPING_TIERS,
+  THEMES,
+  DEFAULT_THEME_ID,
 } from '../../shared/gameConfig.js';
 import { useGameActions } from './useGameActions.js';
 import { useRelationshipMemory } from './useRelationshipMemory.js';
@@ -16,6 +18,10 @@ import {
   getOrCreateUserId,
 } from '../utils/gameStoreHelpers.js';
 const logger = createClientLogger('game-store');
+
+// Re-issue the auth token about twice a day so active sessions stay ahead of the
+// token TTL (measured in days) and never expire out from under the user.
+const TOKEN_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
 export function useGameStore() {
   const avatarResetTimeoutRef = useRef(null);
@@ -55,6 +61,11 @@ export function useGameStore() {
   // Whether the server allows the demo simulated-payment path (instant tip /
   // replayable callback). Off in production — drives ShopModal affordances.
   const [allowSimulatedPayment, setAllowSimulatedPayment] = useState(false);
+  // Whether the server requires an OTP code to register (drives the register form).
+  const [requireRegistrationOtp, setRequireRegistrationOtp] = useState(false);
+  // Cosmetic theme state (which themes the user owns + the equipped one).
+  const [ownedThemes, setOwnedThemes] = useState([DEFAULT_THEME_ID]);
+  const [equippedTheme, setEquippedTheme] = useState(DEFAULT_THEME_ID);
   // Which AI message is currently being voiced (TTS), so its 🔊 button can show
   // a playing state. null when nothing is speaking.
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
@@ -175,6 +186,11 @@ export function useGameStore() {
           setAccount({ bound: Boolean(data.account.bound), identifier: data.account.identifier || null });
         }
         setAllowSimulatedPayment(Boolean(data.allowSimulatedPayment));
+        setRequireRegistrationOtp(Boolean(data.requireRegistrationOtp));
+        if (data.themes) {
+          setOwnedThemes(Array.isArray(data.themes.owned) ? data.themes.owned : [DEFAULT_THEME_ID]);
+          setEquippedTheme(data.themes.equipped || DEFAULT_THEME_ID);
+        }
         applyRelationshipProfile(data.relationship);
         resetFailureState();
       } catch (err) {
@@ -193,6 +209,8 @@ export function useGameStore() {
             const freshId = `user_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString().slice(-4)}`;
             localStorage.setItem('xxa_user_id', freshId);
             setAccount({ bound: false, identifier: null });
+            setEquippedTheme(DEFAULT_THEME_ID);
+            setOwnedThemes([DEFAULT_THEME_ID]);
             notify('登录状态已失效，已切换为游客。重新登录即可恢复你的账号进度。', 'warning', '请重新登录');
             setUserId(freshId);
           } catch { /* ignore storage errors */ }
@@ -334,13 +352,53 @@ export function useGameStore() {
     }
   }, [isMounted, notify, setStateIfMounted]);
 
-  const registerAccount = useCallback((identifier, password) => {
-    return submitAuth('/api/auth/register', { userId, identifier, password });
+  const registerAccount = useCallback((identifier, password, code) => {
+    return submitAuth('/api/auth/register', { userId, identifier, password, ...(code ? { code } : {}) });
   }, [submitAuth, userId]);
 
   const loginAccount = useCallback((identifier, password) => {
     return submitAuth('/api/auth/login', { identifier, password }, { switchUserId: true });
   }, [submitAuth]);
+
+  // Request a verification code for registration / password reset. Returns the
+  // response ({ ok, sent, devCode? }) or null on error (already notified).
+  const requestAuthCode = useCallback(async (identifier, purpose) => {
+    try {
+      const data = await postJson('/api/auth/request-code', { identifier, purpose });
+      if (!isMounted()) return null;
+      return data;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Verification code request failed', { error: err });
+      notify(err.message, 'error', '发送失败');
+      return null;
+    }
+  }, [notify, isMounted]);
+
+  // Reset a forgotten password with a code; on success the server logs us in
+  // (returns a fresh token + the canonical userId), mirroring login.
+  const resetPassword = useCallback(async (identifier, code, password) => {
+    try {
+      const data = await postJson('/api/auth/reset-password', { identifier, code, password });
+      if (!isMounted()) return false;
+      if (data.token) {
+        try { localStorage.setItem('xxa_token', data.token); } catch { /* ignore */ }
+      }
+      if (data.account) {
+        setAccount({ bound: true, identifier: data.account.identifier || null });
+        if (data.account.userId) {
+          try { localStorage.setItem('xxa_user_id', data.account.userId); } catch { /* ignore */ }
+          setUserId(data.account.userId);
+        }
+      }
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Password reset failed', { error: err });
+      notify(err.message, 'error', '重置失败');
+      return false;
+    }
+  }, [notify, isMounted]);
 
   const logoutAccount = useCallback(() => {
     // Best-effort server-side revocation (bumps token_version so the token can't
@@ -352,9 +410,75 @@ export function useGameStore() {
       const freshId = `user_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString().slice(-4)}`;
       localStorage.setItem('xxa_user_id', freshId);
       setAccount({ bound: false, identifier: null });
+      setEquippedTheme(DEFAULT_THEME_ID);
+      setOwnedThemes([DEFAULT_THEME_ID]);
       setUserId(freshId);
     } catch { /* ignore */ }
   }, []);
+
+  // Silently extend a still-valid login by re-issuing the token at its current
+  // version (does NOT revoke other sessions), so an active user is never logged
+  // out mid-use. Best-effort: a guest (no token) no-ops, and a truly-expired
+  // token is handled by the sync effect's 401 -> guest path.
+  const refreshAuthToken = useCallback(async () => {
+    let token = null;
+    try { token = localStorage.getItem('xxa_token'); } catch { /* ignore */ }
+    if (!token) return false;
+    try {
+      const data = await postJson('/api/auth/refresh', {});
+      if (data?.token) {
+        try { localStorage.setItem('xxa_token', data.token); } catch { /* ignore */ }
+      }
+      return true;
+    } catch (err) {
+      if (!isAbortError(err)) {
+        logger.warn('Token refresh failed; keeping the existing token', { error: err });
+      }
+      return false;
+    }
+  }, []);
+
+  // ---- Self-service data rights (privacy / compliance) ----
+  // Export the full account payload; the caller turns it into a download. The
+  // backend deliberately omits the password hash. Returns null on failure.
+  const exportUserData = useCallback(async () => {
+    if (!userId) return null;
+    try {
+      const data = await postJson('/api/user/export', { userId });
+      if (!isMounted()) return null;
+      return data.export || null;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Failed to export user data', { error: err });
+      notify(err.message, 'error', '导出失败');
+      return null;
+    }
+  }, [userId, notify, isMounted]);
+
+  // Permanently delete the account + all data. Afterwards the current token is
+  // dead, so reset to a brand-new guest (mirrors logout) to avoid a 401 loop.
+  const deleteAccount = useCallback(async () => {
+    if (!userId) return false;
+    try {
+      await postJson('/api/user/delete', { userId, confirm: true });
+    } catch (err) {
+      if (isAbortError(err)) return false;
+      logger.error('Failed to delete account', { error: err });
+      notify(err.message, 'error', '注销失败');
+      return false;
+    }
+    if (!isMounted()) return true;
+    try {
+      localStorage.removeItem('xxa_token');
+      const freshId = `user_${Math.random().toString(36).substring(2, 11)}_${Date.now().toString().slice(-4)}`;
+      localStorage.setItem('xxa_user_id', freshId);
+      setAccount({ bound: false, identifier: null });
+      setEquippedTheme(DEFAULT_THEME_ID);
+      setOwnedThemes([DEFAULT_THEME_ID]);
+      setUserId(freshId);
+    } catch { /* ignore */ }
+    return true;
+  }, [userId, notify, isMounted]);
 
   // ---- Long-term memory management (user_memories CRUD) ----
   const loadMemories = useCallback(async () => {
@@ -480,6 +604,78 @@ export function useGameStore() {
     postJson('/api/analytics/track', { userId, type, payload }).catch(() => { /* non-critical */ });
   }, [userId]);
 
+  // ---- Cosmetic themes (换装 / 主题换肤) ----
+  const loadThemes = useCallback(async () => {
+    if (!userId) return false;
+    try {
+      const data = await postJson('/api/themes', { userId });
+      if (!isMounted()) return false;
+      setOwnedThemes((prev) => (Array.isArray(data.owned) ? data.owned : prev));
+      setEquippedTheme(data.equipped || DEFAULT_THEME_ID);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to load themes', { error: err });
+      return false;
+    }
+  }, [userId, isMounted]);
+
+  const unlockTheme = useCallback(async (themeId) => {
+    if (!userId || !themeId) return false;
+    try {
+      const data = await postJson('/api/themes/unlock', { userId, themeId });
+      if (!isMounted()) return false;
+      if (typeof data.coins === 'number') setCoins(data.coins);
+      setOwnedThemes((prev) => (Array.isArray(data.owned) ? data.owned : prev));
+      setEquippedTheme(data.equipped || DEFAULT_THEME_ID);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to unlock theme', { error: err });
+      notify(err.message, 'error', '解锁失败');
+      return false;
+    }
+  }, [userId, notify, isMounted]);
+
+  const equipTheme = useCallback(async (themeId) => {
+    if (!userId || !themeId) return false;
+    try {
+      const data = await postJson('/api/themes/equip', { userId, themeId });
+      if (!isMounted()) return false;
+      setOwnedThemes((prev) => (Array.isArray(data.owned) ? data.owned : prev));
+      setEquippedTheme(data.equipped || DEFAULT_THEME_ID);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to equip theme', { error: err });
+      notify(err.message, 'error', '切换失败');
+      return false;
+    }
+  }, [userId, notify, isMounted]);
+
+  // Apply the equipped theme's palette to the document root whenever it changes.
+  // Every theme defines the same CSS-variable keys, so equipping any theme
+  // (including the default) fully overrides the previously applied one.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const theme = THEMES.find((t) => t.id === equippedTheme) || THEMES.find((t) => t.id === DEFAULT_THEME_ID);
+    if (!theme) return;
+    const root = document.documentElement;
+    for (const [key, value] of Object.entries(theme.vars)) {
+      root.style.setProperty(key, value);
+    }
+  }, [equippedTheme]);
+
+  // Keep an authenticated session alive: refresh once the account is confirmed
+  // bound (after sync / login) and periodically thereafter, so a long-lived tab
+  // doesn't silently expire to a guest. Guests (bound === false) never refresh.
+  useEffect(() => {
+    if (!account.bound) return undefined;
+    refreshAuthToken();
+    const intervalId = setInterval(() => { refreshAuthToken(); }, TOKEN_REFRESH_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [account.bound, refreshAuthToken]);
+
   return {
     level,
     affection,
@@ -500,6 +696,7 @@ export function useGameStore() {
     FOOD_ITEMS,
     GIFT_ITEMS,
     TIPPING_TIERS,
+    THEMES,
     sendMessage,
     feedXiaoxi,
     giftXiaoxi,
@@ -521,6 +718,11 @@ export function useGameStore() {
     registerAccount,
     loginAccount,
     logoutAccount,
+    requireRegistrationOtp,
+    requestAuthCode,
+    resetPassword,
+    exportUserData,
+    deleteAccount,
     transactions,
     isLoadingTransactions,
     loadTransactions,
@@ -532,6 +734,11 @@ export function useGameStore() {
     addMemory,
     updateMemory,
     clearMemories,
+    ownedThemes,
+    equippedTheme,
+    loadThemes,
+    unlockTheme,
+    equipTheme,
     playVoice,
     speakingMessageId,
     track,

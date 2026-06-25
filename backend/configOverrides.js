@@ -6,7 +6,7 @@ import {
   GIFT_ITEMS as GIFT_LIST,
   TIPPING_TIERS as TIP_LIST,
 } from '../shared/gameConfig.js';
-import { DAILY_TASKS, GROWTH_TASKS } from './gameConfig.js';
+import { DAILY_TASKS, GROWTH_TASKS, DEFAULT_TASKS } from './gameConfig.js';
 
 const logger = createLogger('config-overrides');
 
@@ -15,6 +15,7 @@ const logger = createLogger('config-overrides');
 //   food:<id>:cost          shop food price
 //   gift:<id>:cost          shop gift price
 //   tippingTier:<amount>:coins  coins granted for a tipping tier
+//   task:<id>:reward        coins awarded for completing a task
 // Values must be positive integers within sane bounds. Stored in config_overrides
 // and held in an in-memory cache so the hot purchase path stays synchronous; the
 // cache is loaded once at startup and refreshed on every admin write.
@@ -23,6 +24,7 @@ const VALUE_MAX = 1_000_000;
 const baseFood = new Map(FOOD_LIST.map((i) => [String(i.id), i]));
 const baseGift = new Map(GIFT_LIST.map((i) => [String(i.id), i]));
 const baseTip = new Map(TIP_LIST.map((t) => [String(t.amount), t]));
+const baseTask = new Map(DEFAULT_TASKS.map((t) => [String(t.id), t]));
 
 // key -> integer value
 let cache = new Map();
@@ -37,6 +39,7 @@ function parseOverrideKey(key) {
   if (section === 'food' && field === 'cost' && baseFood.has(id)) return { section, id, field };
   if (section === 'gift' && field === 'cost' && baseGift.has(id)) return { section, id, field };
   if (section === 'tippingTier' && field === 'coins' && baseTip.has(id)) return { section, id, field };
+  if (section === 'task' && field === 'reward' && baseTask.has(id)) return { section, id, field };
   throw new AppError(400, 'INVALID_OVERRIDE_KEY', `不支持或不存在的配置项：${key}`);
 }
 
@@ -89,15 +92,29 @@ export function getEffectiveTippingTiers() {
   return effectiveRecord(baseTip, 'tippingTier', 'coins');
 }
 
-// Full snapshot for the admin console (tasks shown unmodified — overriding them
-// is a documented future extension).
+// Apply task-reward overrides to a list of task definitions. Never mutates base.
+function applyTaskRewards(list) {
+  return list.map((task) => {
+    const override = cache.get(`task:${task.id}:reward`);
+    return override !== undefined ? { ...task, reward: override } : { ...task };
+  });
+}
+
+// Effective task catalog (rewards overridden). Used to seed per-user task rows
+// so an operator's reward change takes effect on each user's next sync — the
+// seed upsert refreshes the stored reward — mirroring the shop-price overrides.
+export function getEffectiveTasks() {
+  return applyTaskRewards(DEFAULT_TASKS);
+}
+
+// Full snapshot for the admin console, with all operator overrides applied.
 export function getConfigSnapshot() {
   return {
     food: Object.values(getEffectiveFood()),
     gifts: Object.values(getEffectiveGifts()),
     tippingTiers: Object.values(getEffectiveTippingTiers()),
-    dailyTasks: DAILY_TASKS,
-    growthTasks: GROWTH_TASKS,
+    dailyTasks: applyTaskRewards(DAILY_TASKS),
+    growthTasks: applyTaskRewards(GROWTH_TASKS),
   };
 }
 

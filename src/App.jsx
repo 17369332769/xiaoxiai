@@ -8,6 +8,7 @@ import ShopModal from './components/ShopModal';
 import WalletModal from './components/WalletModal';
 import AuthModal from './components/AuthModal';
 import MemoryModal from './components/MemoryModal';
+import ThemeModal from './components/ThemeModal';
 import CelebrateEffect from './components/CelebrateEffect';
 import NotificationCenter from './components/NotificationCenter';
 import SyncStatusBanner from './components/SyncStatusBanner';
@@ -23,6 +24,7 @@ function App() {
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+  const [isThemeOpen, setIsThemeOpen] = useState(false);
 
   // Open wallet / transaction history and refresh the ledger
   const openWallet = () => {
@@ -35,6 +37,13 @@ function App() {
   const openMemory = () => {
     setIsMemoryOpen(true);
     store.loadMemories();
+  };
+
+  // Open the theme / wardrobe picker and refresh the owned/equipped state
+  const openTheme = () => {
+    setIsThemeOpen(true);
+    store.loadThemes();
+    store.track('open_theme');
   };
 
   const openAuth = () => {
@@ -143,6 +152,7 @@ function App() {
             openTipping={openTipping}
             openWallet={openWallet}
             openMemory={openMemory}
+            openTheme={openTheme}
             openAuth={openAuth}
             checkinStreak={store.checkinStreak}
             accountBound={store.account?.bound}
@@ -200,6 +210,11 @@ function App() {
         registerAccount={store.registerAccount}
         loginAccount={store.loginAccount}
         logoutAccount={store.logoutAccount}
+        requireRegistrationOtp={store.requireRegistrationOtp}
+        requestAuthCode={store.requestAuthCode}
+        resetPassword={store.resetPassword}
+        exportUserData={store.exportUserData}
+        deleteAccount={store.deleteAccount}
         notify={store.notify}
       />
 
@@ -215,9 +230,26 @@ function App() {
         clearMemories={store.clearMemories}
       />
 
+      <ThemeModal
+        isOpen={isThemeOpen}
+        onClose={() => setIsThemeOpen(false)}
+        themes={store.THEMES}
+        ownedThemes={store.ownedThemes}
+        equippedTheme={store.equippedTheme}
+        coins={store.coins}
+        unlockTheme={store.unlockTheme}
+        equipTheme={store.equipTheme}
+        notify={store.notify}
+      />
+
       {/* Footer Branding */}
       <footer className="site-footer">
         <div>© 2026 xiaoxiai.com · 小希 AI 温柔女友版 · 带给您全天候的暖心陪伴</div>
+        <div style={{ marginTop: '6px', fontSize: '12px' }}>
+          <a href="/privacy.html" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-pink, #ffa3b8)' }}>隐私政策</a>
+          {' · '}
+          <a href="/terms.html" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-pink, #ffa3b8)' }}>服务条款</a>
+        </div>
       </footer>
     </div>
   );

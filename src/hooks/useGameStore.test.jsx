@@ -1228,4 +1228,248 @@ describe('useGameStore', () => {
     expect(result.current.syncError).toBe('');
     expect(result.current.level).toBe(1);
   });
+
+  test('exportUserData fetches the full data payload for download', async () => {
+    let exportBody = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+      if (input === '/api/user/export') {
+        exportBody = body;
+        return mockJsonResponse({ ok: true, export: { exportedAt: 't0', user: { id: 'u1' }, chatMessages: [], memories: [] } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    let payload;
+    await act(async () => { payload = await result.current.exportUserData(); });
+
+    expect(exportBody).toEqual({ userId: expect.any(String) });
+    expect(payload).toEqual({ exportedAt: 't0', user: { id: 'u1' }, chatMessages: [], memories: [] });
+  });
+
+  test('deleteAccount confirms deletion and resets to a fresh guest', async () => {
+    try {
+      localStorage.setItem('xxa_user_id', 'guest_old');
+      localStorage.setItem('xxa_token', 'live-token');
+    } catch { /* ignore */ }
+
+    let deleteBody = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+        });
+      }
+      if (input === '/api/user/delete') {
+        deleteBody = body;
+        return mockJsonResponse({ ok: true, removed: { users: 1 } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    let ok;
+    await act(async () => { ok = await result.current.deleteAccount(); });
+
+    expect(ok).toBe(true);
+    // The backend requires explicit confirm: true; userId is the resolved id.
+    expect(deleteBody).toEqual({ userId: expect.any(String), confirm: true });
+    // Local session is wiped and rotated to a brand-new guest id (no 401 loop).
+    expect(localStorage.getItem('xxa_token')).toBe(null);
+    expect(localStorage.getItem('xxa_user_id')).toMatch(/^user_/);
+    expect(localStorage.getItem('xxa_user_id')).not.toBe('guest_old');
+    expect(result.current.account.bound).toBe(false);
+  });
+
+  test('refreshes the auth token once the account is confirmed bound', async () => {
+    try { localStorage.setItem('xxa_token', 'old-token'); } catch { /* ignore */ }
+
+    let refreshCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+          account: { bound: true, identifier: 'me@example.com' },
+        });
+      }
+      if (input === '/api/auth/refresh') {
+        refreshCalls += 1;
+        return mockJsonResponse({ ok: true, token: 'fresh-token', account: { bound: true, identifier: 'me@example.com' } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.account.bound).toBe(true));
+    await waitFor(() => expect(refreshCalls).toBeGreaterThanOrEqual(1));
+
+    // The session was silently extended with the re-issued token.
+    expect(localStorage.getItem('xxa_token')).toBe('fresh-token');
+  });
+
+  test('requireRegistrationOtp reflects the sync response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({
+          ok: true,
+          user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false },
+          chatHistory: [],
+          tasks: [],
+          requireRegistrationOtp: true,
+        });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.requireRegistrationOtp).toBe(true));
+  });
+
+  test('requestAuthCode posts to the backend and returns the response', async () => {
+    let codeBody = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false }, chatHistory: [], tasks: [] });
+      }
+      if (input === '/api/auth/request-code') {
+        codeBody = body;
+        return mockJsonResponse({ ok: true, sent: true, devCode: '123456' });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    let res;
+    await act(async () => { res = await result.current.requestAuthCode('tester@example.com', 'reset'); });
+    expect(codeBody).toEqual({ identifier: 'tester@example.com', purpose: 'reset' });
+    expect(res.devCode).toBe('123456');
+  });
+
+  test('resetPassword stores the fresh token and switches to the account user', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false }, chatHistory: [], tasks: [] });
+      }
+      if (input === '/api/auth/reset-password') {
+        return mockJsonResponse({ ok: true, token: 'reset-token', account: { bound: true, identifier: 'tester@example.com', userId: 'acct_user_1' } });
+      }
+      if (input === '/api/auth/refresh') {
+        return mockJsonResponse({ ok: true, token: 'reset-token', account: { bound: true, identifier: 'tester@example.com', userId: 'acct_user_1' } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    let ok;
+    await act(async () => { ok = await result.current.resetPassword('tester@example.com', '123456', 'newpass456'); });
+    expect(ok).toBe(true);
+    expect(localStorage.getItem('xxa_token')).toBe('reset-token');
+    expect(localStorage.getItem('xxa_user_id')).toBe('acct_user_1');
+    await waitFor(() => expect(result.current.account.bound).toBe(true));
+  });
+
+  test('registerAccount forwards the verification code to the backend', async () => {
+    let regBody = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false }, chatHistory: [], tasks: [] });
+      }
+      if (input === '/api/auth/register') {
+        regBody = body;
+        return mockJsonResponse({ ok: true, token: 't', account: { identifier: 'newbie@example.com', userId: 'u1' } });
+      }
+      if (input === '/api/auth/refresh') {
+        return mockJsonResponse({ ok: true, token: 't', account: { identifier: 'newbie@example.com', userId: 'u1' } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.isSyncing).toBe(false));
+
+    await act(async () => { await result.current.registerAccount('newbie@example.com', 'secret123', '654321'); });
+    expect(regBody.code).toBe('654321');
+  });
+
+  test('unlockTheme debits coins, owns, and equips the theme', async () => {
+    let unlockBody = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 2000, hasCheckedInToday: false }, chatHistory: [], tasks: [] });
+      }
+      if (input === '/api/themes/unlock') {
+        unlockBody = body;
+        return mockJsonResponse({ ok: true, owned: ['default', 'starry'], equipped: 'starry', coins: 1400 });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.coins).toBe(2000));
+
+    let ok;
+    await act(async () => { ok = await result.current.unlockTheme('starry'); });
+    expect(ok).toBe(true);
+    expect(unlockBody).toEqual({ userId: expect.any(String), themeId: 'starry' });
+    expect(result.current.coins).toBe(1400);
+    expect(result.current.equippedTheme).toBe('starry');
+    expect(result.current.ownedThemes).toContain('starry');
+  });
+
+  test('equipTheme switches the equipped theme', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false }, chatHistory: [], tasks: [], themes: { owned: ['default', 'starry'], equipped: 'starry' } });
+      }
+      if (input === '/api/themes/equip') {
+        return mockJsonResponse({ ok: true, owned: ['default', 'starry'], equipped: 'default' });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.equippedTheme).toBe('starry'));
+    await act(async () => { await result.current.equipTheme('default'); });
+    expect(result.current.equippedTheme).toBe('default');
+  });
+
+  test('theme ownership + equipped state come from the sync response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/user/sync') {
+        return mockJsonResponse({ ok: true, user: { level: 1, affection: 10, energy: 80, mood: 70, coins: 200, hasCheckedInToday: false }, chatHistory: [], tasks: [], themes: { owned: ['default', 'ocean'], equipped: 'ocean' } });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameStore());
+    await waitFor(() => expect(result.current.equippedTheme).toBe('ocean'));
+    expect(result.current.ownedThemes).toContain('ocean');
+  });
 });

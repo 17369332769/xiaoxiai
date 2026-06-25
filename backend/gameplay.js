@@ -1,5 +1,6 @@
 import { dbAll, dbGet, dbRun } from './db.js';
-import { DAILY_TASK_IDS, DEFAULT_TASKS, getCheckinStreakReward } from './gameConfig.js';
+import { DAILY_TASK_IDS, getCheckinStreakReward } from './gameConfig.js';
+import { getEffectiveTasks } from './configOverrides.js';
 import { createLogger } from './logger.js';
 import { generateId } from './httpUtils.js';
 import { resolvePositiveIntEnv } from './envUtils.js';
@@ -73,7 +74,7 @@ export async function loadFormattedTasks(userId) {
 }
 
 export async function ensureUserTasks(userId) {
-  for (const task of DEFAULT_TASKS) {
+  for (const task of getEffectiveTasks()) {
     await dbRun(
       `INSERT INTO tasks (user_id, task_id, name, reward, progress, target, completed, claimed, category)
        VALUES (?, ?, ?, ?, 0, ?, 0, 0, ?)

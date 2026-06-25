@@ -111,6 +111,16 @@ export async function incrementTokenVersion(accountId) {
   return row ? row.token_version : null;
 }
 
+// Replace an account's password and revoke every outstanding session (bump
+// token_version), so a reset also kicks out anyone holding a stale/leaked token.
+export async function resetAccountPassword(accountId, newPassword) {
+  const result = await dbRun(
+    'UPDATE accounts SET password_hash = ?, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?',
+    [hashPassword(newPassword), accountId]
+  );
+  return result.changes > 0;
+}
+
 export function verifyToken(token, secret) {
   if (typeof token !== 'string' || !token.includes('.')) return null;
   const [payload, sig] = token.split('.');
