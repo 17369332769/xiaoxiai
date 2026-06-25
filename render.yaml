@@ -1,0 +1,60 @@
+# Render Blueprint —— 一键创建小希 AI 服务。
+# 用法：把仓库连到 Render → New + → Blueprint → 选本仓库，Render 读取本文件。
+# 注：持久磁盘需要付费实例（starter 起），免费实例没有磁盘 = 每次部署数据丢失。
+services:
+  - type: web
+    name: xiaoxiai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # 持久磁盘必须付费实例；要更高并发可升 standard
+    region: singapore        # 离中国大陆较近的区
+    healthCheckPath: /api/health
+    autoDeploy: true         # push 到默认分支自动重新部署
+
+    # SQLite 持久化：挂一块盘到 /var/data，DB 与备份都放这里
+    disk:
+      name: xiaoxiai-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Asia/Shanghai
+      # Render 边缘代理 + 容器内 nginx，共 2 跳；务必核实日志里 req.ip 是真实客户端，
+      # 若仍是内网地址(10.x/100.x)再上调（见 RENDER_DEPLOY.md 的核实步骤）。
+      - key: TRUST_PROXY
+        value: "2"
+      - key: XIAOXIAI_DB_PATH
+        value: /var/data/xiaoxiai.sqlite
+      - key: DB_BACKUP_DIR
+        value: /var/data/backups
+      # 生产必须保持 false（NODE_ENV=production 也会再兜底强制关闭）
+      - key: ALLOW_SIMULATED_PAYMENT
+        value: "false"
+
+      # —— 强随机密钥：Render 自动生成，不入库 ——
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: PAYMENT_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+
+      # —— 需在 Dashboard 手填的值（sync:false = 不由 Blueprint 管理）——
+      # 部署出域名后填成 https://<服务名>.onrender.com 或你的自定义域名
+      - key: ALLOWED_ORIGIN
+        sync: false
+      # 外部模型（留空则用本地规则回复引擎）
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_API_BASE_URL
+        sync: false
+      - key: OPENAI_MODEL_NAME
+        sync: false
+      # 语音（MiniMax）/ 联网搜索（博查），不用可不填
+      - key: MINIMAX_API_KEY
+        sync: false
+      - key: BOCHA_API_KEY
+        sync: false

@@ -17,6 +17,12 @@ backend/.env.*
 backend/*.sqlite
 backend/*.sqlite-shm
 backend/*.sqlite-wal
+# Also ignore the SQLite DB + backups at any depth (e.g. backend/core/ after a reorg)
+backend/**/*.sqlite
+backend/**/*.sqlite-shm
+backend/**/*.sqlite-wal
+backend/backups/
+backend/**/backups/
 
 # Editor directories and files
 .vscode/*

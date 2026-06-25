@@ -1,0 +1,39 @@
+# 启动时由 start.sh 用 envsubst 把 ${NGINX_PORT} 替换为 Render 注入的 $PORT，
+# 其余 nginx 变量（$host/$remote_addr/$uri 等）保持原样。
+server {
+    listen ${NGINX_PORT};
+    server_name _;
+
+    root /app/dist;
+    index index.html;
+
+    # API 反代到同容器内的 node 后端（固定监听 127.0.0.1:3000）
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 流式聊天 SSE（/api/chat/stream）：关闭缓冲，token 实时下发
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }
+
+    # 探活端点（Render healthCheckPath 命中这里）
+    location = /api/health {
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    # 运营后台页（构建时已随 public/ 复制进 dist/，纯静态文件）
+    location = /admin.html {
+        try_files /admin.html =404;
+    }
+
+    # SPA 路由回退
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

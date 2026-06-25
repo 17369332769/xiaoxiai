@@ -16,7 +16,9 @@ export const DEFAULT_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
 const BACKUP_FILE_RE = /^database-.+\.sqlite$/;
 
 function defaultBackupDir() {
-  return process.env.DB_BACKUP_DIR || path.join(__dirname, 'backups');
+  // Resolve relative to backend/ root (one level up from services/) so backups
+  // sit beside the data file, not under the services directory.
+  return process.env.DB_BACKUP_DIR || path.join(__dirname, '..', 'backups');
 }
 
 function backupFileName() {

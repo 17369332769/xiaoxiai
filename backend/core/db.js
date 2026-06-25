@@ -4,7 +4,9 @@ import { fileURLToPath } from 'url';
 import { createLogger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.XIAOXIAI_DB_PATH || path.join(__dirname, 'database.sqlite');
+// Resolve relative to backend/ root (one level up from core/) so the data file
+// location stays stable regardless of where this module lives in the tree.
+const dbPath = process.env.XIAOXIAI_DB_PATH || path.join(__dirname, '..', 'database.sqlite');
 const logger = createLogger('db');
 let resolveDbReady;
 let rejectDbReady;
