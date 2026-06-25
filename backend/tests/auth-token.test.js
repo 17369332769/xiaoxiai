@@ -14,7 +14,7 @@ process.env.AUTH_SECRET = 'test-auth-secret';
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-tok-test-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
-const [{ app }, dbModule] = await Promise.all([import('../server.js'), import('../db.js')]);
+const [{ app }, dbModule] = await Promise.all([import('../server.js'), import('../core/db.js')]);
 await dbModule.dbReady;
 
 let server;

@@ -12,8 +12,8 @@ const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-memory-test-')
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [dbModule, memoryStore] = await Promise.all([
-  import('../db.js'),
-  import('../memoryStore.js'),
+  import('../core/db.js'),
+  import('../services/memory/memoryStore.js'),
 ]);
 
 await dbModule.dbReady;

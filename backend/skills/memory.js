@@ -4,7 +4,7 @@
 // to the same sanitization and per-user cap as every other memory path.
 // Disable both with MEMORY_TOOL_ENABLED=false.
 
-import { enforceMemoryCap, listMemories, upsertMemory } from '../memoryStore.js';
+import { enforceMemoryCap, listMemories, upsertMemory } from '../services/memory/memoryStore.js';
 import { humanizeMemoryKey } from '../../shared/memoryLabels.js';
 
 function memoryToolsEnabled() {

@@ -11,9 +11,9 @@ const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-analytics-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [analytics, gameplay, dbModule] = await Promise.all([
-  import('../analytics.js'),
-  import('../gameplay.js'),
-  import('../db.js'),
+  import('../services/analytics.js'),
+  import('../services/gameplay.js'),
+  import('../core/db.js'),
 ]);
 
 await dbModule.dbReady;

@@ -17,8 +17,8 @@ process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [{ app }, dbModule, configOverrides] = await Promise.all([
   import('../server.js'),
-  import('../db.js'),
-  import('../configOverrides.js'),
+  import('../core/db.js'),
+  import('../services/configOverrides.js'),
 ]);
 await dbModule.dbReady;
 

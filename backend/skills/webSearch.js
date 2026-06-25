@@ -4,7 +4,7 @@
 // Bocha logic and its tests stay intact; this file only adapts it to the skill
 // contract consumed by the registry.
 
-import { WEB_SEARCH_TOOL, isWebSearchEnabled, runWebSearch } from '../webSearch.js';
+import { WEB_SEARCH_TOOL, isWebSearchEnabled, runWebSearch } from '../services/ai/webSearch.js';
 
 export default {
   name: 'web_search',

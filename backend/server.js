@@ -1,12 +1,12 @@
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { createApp } from './app.js';
-import { createOpenAiClient } from './aiRuntime.js';
-import { createLogger, logConfig } from './logger.js';
-import { dbReady } from './db.js';
-import { ensureSeedBroadcast } from './broadcasts.js';
-import { startBackupSchedule } from './backup.js';
-import { loadConfigOverrides } from './configOverrides.js';
+import { createOpenAiClient } from './services/ai/aiRuntime.js';
+import { createLogger, logConfig } from './core/logger.js';
+import { dbReady } from './core/db.js';
+import { ensureSeedBroadcast } from './services/broadcasts.js';
+import { startBackupSchedule } from './services/backup.js';
+import { loadConfigOverrides } from './services/configOverrides.js';
 
 // Load environment variables
 dotenv.config();

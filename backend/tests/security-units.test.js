@@ -11,10 +11,10 @@ const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-secunit-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [{ createResolveUser }, { createLoginThrottle }, accounts, dbModule] = await Promise.all([
-  import('../resolveUser.js'),
-  import('../authThrottle.js'),
-  import('../accounts.js'),
-  import('../db.js'),
+  import('../core/resolveUser.js'),
+  import('../services/authThrottle.js'),
+  import('../services/accounts.js'),
+  import('../core/db.js'),
 ]);
 
 await dbModule.dbReady;

@@ -10,9 +10,9 @@ process.env.LOG_REQUESTS = 'false';
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xiaoxiai-backup-test-'));
 process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'database.sqlite');
 
-const dbModule = await import('../db.js');
+const dbModule = await import('../core/db.js');
 await dbModule.dbReady;
-const backup = await import('../backup.js');
+const backup = await import('../services/backup.js');
 
 const BACKUP_DIR = path.join(tempDir, 'backups');
 

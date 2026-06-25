@@ -20,10 +20,10 @@ process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [{ app }, dbModule, gameplay, gameConfig, accounts] = await Promise.all([
   import('../server.js'),
-  import('../db.js'),
-  import('../gameplay.js'),
-  import('../gameConfig.js'),
-  import('../accounts.js'),
+  import('../core/db.js'),
+  import('../services/gameplay.js'),
+  import('../config/gameConfig.js'),
+  import('../services/accounts.js'),
 ]);
 
 await dbModule.dbReady;
@@ -120,7 +120,7 @@ test('payment callback marks the order failed on a non-success result', async ()
   const create = await postJson('/api/order/create', { userId, amount: 52, paymentMethod: 'wechat' });
 
   // Re-sign a FAILED result so the signature is valid but payment did not succeed.
-  const { signParams } = await import('../orders.js');
+  const { signParams } = await import('../services/orders.js');
   const params = {
     out_trade_no: create.body.simulatedCallback.out_trade_no,
     total_amount: 52,

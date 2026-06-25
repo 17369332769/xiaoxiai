@@ -23,10 +23,16 @@ xiaoxiai/
 ├─ src/                  # 前端 React 页面与状态逻辑
 ├─ public/               # 静态资源
 ├─ backend/              # Express + SQLite 后端
-│  ├─ server.js          # API 入口
-│  ├─ db.js              # SQLite 初始化与封装
-│  ├─ memoryEngine.js    # 记忆整理任务
+│  ├─ server.js          # 启动入口
+│  ├─ app.js             # Express 应用组装（挂载中间件 + 注册各路由）
+│  ├─ routes/            # HTTP 端点注册（apiRoutes / accountRoutes / themeRoutes 等）
+│  ├─ services/          # 领域/业务逻辑（含 ai/、memory/ 子域）
+│  ├─ core/              # 跨切面基础设施（db / logger / middleware / httpUtils / 鉴权）
+│  ├─ config/            # 后端运行时配置（gameConfig）
+│  ├─ skills/            # 模型可调用的工具技能（联网搜索 / 天气 / 记忆等）
+│  ├─ tests/             # 后端测试（node --test）
 │  └─ database.sqlite    # 本地运行时生成的数据库文件（默认不提交）
+├─ shared/               # 前后端共享配置（gameConfig / memoryLabels）
 ├─ vite.config.js        # 前端开发代理配置
 └─ 需求分析文档.md        # 当前产品需求与迭代建议
 ```

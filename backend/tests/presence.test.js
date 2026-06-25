@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPresenceTracker } from '../presence.js';
+import { createPresenceTracker } from '../services/presence.js';
 
 test('presence counts active heartbeats and blends the display baseline', () => {
   const presence = createPresenceTracker({ ttlMs: 1000, baseline: 5 });

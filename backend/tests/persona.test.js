@@ -6,7 +6,7 @@ import {
   getStateConstrainedReply,
   getStateNote,
   getTimeGreeting,
-} from '../personaEngine.js';
+} from '../services/personaEngine.js';
 
 test('getStateConstrainedReply nudges care only when energy/mood are critically low', () => {
   // Healthy stats → no forced reply (the model/local engine answers normally).

@@ -9,7 +9,7 @@ process.env.MINIMAX_TTS_MODEL = 'speech-02-turbo';
 process.env.MINIMAX_TTS_VOICE_ID = 'female-tianmei';
 process.env.MINIMAX_TTS_FORMAT = 'mp3';
 
-const tts = await import('../tts.js');
+const tts = await import('../services/ai/tts.js');
 
 const originalFetch = globalThis.fetch;
 test.after(() => {

@@ -303,3 +303,13 @@
 **验证**：`npm run verify` 全绿——前端 **82** + 后端 **184** + build，EXIT 0。
 
 **git**：均未提交，处置交用户决定。
+
+## 第22轮（结构整理：功能提交 + backend 目录分层）
+
+> 2026-06-25。用户反馈"目录很乱"。按"先提交功能、再重构"推进。
+
+**功能提交** `495ae28`：本轮 8 个功能（数据导出/注销、令牌续期、任务奖励覆盖、隐私模板、OTP+密码找回、主题换肤、主动召回）。受限于多个共享文件被多功能交叉改动 + 本环境无交互式分块暂存（`git add -p`），作为**一个详述的功能提交**而非逐特性拆分。
+
+**目录重构**：`backend/` 从 41 个扁平 `.js` 整理为分层结构——`core/`（db / logger / middleware / httpUtils / appError / envUtils / resolveUser）、`routes/`（10 个 `*Routes.js` 端点注册）、`services/`（领域逻辑，含 `ai/`、`memory/` 子域）、`config/`（gameConfig）；`server.js` / `app.js` / `skills/` / `tests/` / `*.md` 保留根。用 Node codemod 自动 `git mv` 39 文件 + 重写 **59 文件中 176 处**相对 import（正确区分 `backend/gameConfig.js` 与 `shared/gameConfig.js`）。两处 codemod 边界手工修正：① `apiRoutes`→`./skills/` 移到 routes/ 后应为 `../skills/`；② `skills/registry` 对**同名** `webSearch.js`（技能默认导出 vs 服务命名导出）的冲突被误改，还原为同目录技能。`src/` 已分层，不动。
+
+**验证**：`npm run verify` 全绿——前端 **82** + 后端 **184** + build，EXIT 0（测试数重构前后不变，纯结构变更）。README「项目结构」已同步。

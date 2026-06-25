@@ -1,18 +1,18 @@
 import express from 'express';
-import { createErrorHandler, applyCommonMiddleware } from './middleware.js';
-import { registerApiRoutes } from './apiRoutes.js';
-import { registerOrderRoutes } from './orderRoutes.js';
-import { registerAccountRoutes } from './accountRoutes.js';
-import { registerCommunityRoutes } from './communityRoutes.js';
-import { registerAnalyticsRoutes } from './analyticsRoutes.js';
-import { registerMemoryRoutes } from './memoryRoutes.js';
-import { registerTtsRoutes } from './ttsRoutes.js';
-import { registerUserRoutes } from './userRoutes.js';
-import { registerThemeRoutes } from './themeRoutes.js';
-import { registerAdminRoutes } from './adminRoutes.js';
-import { createPresenceTracker } from './presence.js';
-import { createResolveUser } from './resolveUser.js';
-import { dbGet } from './db.js';
+import { createErrorHandler, applyCommonMiddleware } from './core/middleware.js';
+import { registerApiRoutes } from './routes/apiRoutes.js';
+import { registerOrderRoutes } from './routes/orderRoutes.js';
+import { registerAccountRoutes } from './routes/accountRoutes.js';
+import { registerCommunityRoutes } from './routes/communityRoutes.js';
+import { registerAnalyticsRoutes } from './routes/analyticsRoutes.js';
+import { registerMemoryRoutes } from './routes/memoryRoutes.js';
+import { registerTtsRoutes } from './routes/ttsRoutes.js';
+import { registerUserRoutes } from './routes/userRoutes.js';
+import { registerThemeRoutes } from './routes/themeRoutes.js';
+import { registerAdminRoutes } from './routes/adminRoutes.js';
+import { createPresenceTracker } from './services/presence.js';
+import { createResolveUser } from './core/resolveUser.js';
+import { dbGet } from './core/db.js';
 
 export function createApp({
   logger,

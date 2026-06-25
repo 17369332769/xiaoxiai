@@ -2,7 +2,7 @@
 // state instead of inventing numbers. Pure internal read (no external calls, no
 // writes), so it is always available. Reads the already-loaded `ctx.user` row.
 
-import { getRelationshipTier } from '../gameConfig.js';
+import { getRelationshipTier } from '../config/gameConfig.js';
 
 export default {
   name: 'get_game_status',

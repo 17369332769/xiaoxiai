@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolvePositiveIntEnv } from '../envUtils.js';
+import { resolvePositiveIntEnv } from '../core/envUtils.js';
 
 test('resolvePositiveIntEnv returns the parsed value for a positive integer string', () => {
   assert.equal(resolvePositiveIntEnv('5', 99), 5);

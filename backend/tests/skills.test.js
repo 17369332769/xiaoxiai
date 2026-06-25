@@ -19,7 +19,7 @@ process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 // Importing the registry transitively opens the SQLite DB (memory skill), so the
 // DB path must be set first. Then await readiness before exercising memory skills.
 const [dbModule, registry, gameStatusModule, weatherModule, memoryModule] = await Promise.all([
-  import('../db.js'),
+  import('../core/db.js'),
   import('../skills/registry.js'),
   import('../skills/gameStatus.js'),
   import('../skills/weather.js'),

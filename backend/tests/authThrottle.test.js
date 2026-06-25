@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 process.env.LOG_LEVEL = 'error';
 process.env.LOG_REQUESTS = 'false';
 
-const { createLoginThrottle } = await import('../authThrottle.js');
+const { createLoginThrottle } = await import('../services/authThrottle.js');
 
 test('tier 1: identifier+IP locks independently per IP', () => {
   const t = createLoginThrottle({ maxFailed: 2, lockMs: 1000, windowMs: 60000, idMaxFailed: 100, idWindowMs: 60000, idLockMs: 1000 });

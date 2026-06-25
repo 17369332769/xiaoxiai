@@ -18,7 +18,7 @@ process.env.XIAOXIAI_DB_PATH = path.join(tempDir, 'test.sqlite');
 
 const [{ app }, dbModule] = await Promise.all([
   import('../server.js'),
-  import('../db.js'),
+  import('../core/db.js'),
 ]);
 const {
   buildChatSystemPrompt,
@@ -29,7 +29,7 @@ const {
   generateAiResponseStream,
   deriveEmotion,
   screenAiReply,
-} = await import('../apiRoutes.js');
+} = await import('../routes/apiRoutes.js');
 
 await dbModule.dbReady;
 const { dbRun } = dbModule;
