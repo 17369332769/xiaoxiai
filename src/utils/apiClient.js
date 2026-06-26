@@ -128,5 +128,20 @@ export async function postSse(url, payload, { signal, onEvent } = {}) {
     }
   }
 
+  // Defensive flush: our backend always terminates frames (incl. the final
+  // `done`) with a blank line, but a non-conforming server might omit the last
+  // delimiter. Parse any leftover so the final frame isn't silently dropped.
+  const tail = buffer.replace(/\r\n/g, '\n').trim();
+  if (tail) {
+    const { event, data } = parseSseFrame(tail);
+    if (event) {
+      let parsed = {};
+      if (data) {
+        try { parsed = JSON.parse(data); } catch { parsed = {}; }
+      }
+      onEvent?.(event, parsed);
+    }
+  }
+
   return null;
 }
