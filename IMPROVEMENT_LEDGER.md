@@ -331,4 +331,6 @@
 
 **验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **83** + 后端 **186** + build，EXIT 0。
 
-**git**：均未提交，处置交用户决定（`backend/.env` 含真实 key，gitignored）。
+**git**：提交 `f4c3dea` 并推送到 `origin/main`（`backend/.env` 含真实 key，gitignored 未提交）。
+
+**追加修复（同轮）**：用户实测发现"现在 openai 有什么新动作"被模型凭记忆编旧闻（GPT-4o mini）且假装"打开手机查了一下"，日志确认**未真正调用** web_search（天气类问题正常触发，说明机制 OK，是模型在 `tool_choice:'auto'` 下的调用决策问题）。强化 `web_search` 的工具 `description`（`services/ai/webSearch.js`）与 `promptHint`（`skills/webSearch.js`）：明确"训练知识可能过时、涉及最新/近期客观信息必须先搜"，并新增反"假装查询"规则（想说"我查一下/打开手机看看"就必须真调用 web_search）。实测同一句话现已真触发：`web search completed {OpenAI 最新动态 2026年6月}`，回复为当前真实信息。verify 仍全绿。
