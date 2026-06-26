@@ -11,6 +11,8 @@ export default function ActionMenu({
   openMemory,
   openTheme,
   openAuth,
+  characterSkin = 'xiaoxi',
+  onSwitchCharacter,
   checkinStreak = 0,
   accountBound = false,
   isInteractionLocked = false,
@@ -156,6 +158,16 @@ export default function ActionMenu({
           <button onClick={openTheme} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🎀</span>
             <span>形象换装</span>
+          </button>
+
+          {/* Character Skin Switch Button */}
+          <button
+            onClick={onSwitchCharacter}
+            className="btn-secondary action-btn"
+            title={characterSkin === 'xiaoxi' ? '当前：小希立绘，点击换小雅' : '当前：小雅立绘，点击换小希'}
+          >
+            <span className="action-icon">🧑‍🎨</span>
+            <span>{characterSkin === 'xiaoxi' ? '换小雅' : '换小希'}</span>
           </button>
 
           {/* Account Center Button */}

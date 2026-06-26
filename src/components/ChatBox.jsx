@@ -1,7 +1,19 @@
 import * as React from 'react';
-import xiaoxiNormal from '../assets/xiaoxi_normal.jpg';
-import xiaoxiHappy from '../assets/xiaoxi_happy.jpg';
-import xiaoxiBlush from '../assets/xiaoxi_blush.jpg';
+
+// 小希 立绘
+import xiaoxiNormal from '../assets/characters/xiaoxi/normal.jpg';
+import xiaoxiHappy from '../assets/characters/xiaoxi/happy.jpg';
+import xiaoxiBlush from '../assets/characters/xiaoxi/blush.jpg';
+
+// 小雅 立绘
+import xiaoyaNormal from '../assets/characters/xiaoya/normal.png';
+import xiaoyaHappy from '../assets/characters/xiaoya/happy.png';
+import xiaoyaBlush from '../assets/characters/xiaoya/blush.png';
+
+const CHARACTER_ASSETS = {
+  xiaoxi: { normal: xiaoxiNormal, happy: xiaoxiHappy, blush: xiaoxiBlush },
+  xiaoya: { normal: xiaoyaNormal, happy: xiaoyaHappy, blush: xiaoyaBlush },
+};
 
 const { useRef, useEffect, useState } = React;
 
@@ -14,7 +26,7 @@ const QUICK_PROMPTS = [
 ];
 
 // Sub-component for AI messages (with interactive avatar and dynamic reactions)
-function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpeaking = false }) {
+function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpeaking = false, characterSkin = 'xiaoxi' }) {
   const [hearts, setHearts] = useState([]);
   const fullText = msg.text || '';
   const [displayText, setDisplayText] = useState(animate ? '' : fullText);
@@ -41,14 +53,15 @@ function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpe
   }, [animate, fullText]);
 
   const getAvatarSrc = (avatarState) => {
+    const assets = CHARACTER_ASSETS[characterSkin] || CHARACTER_ASSETS.xiaoxi;
     switch (avatarState) {
       case 'happy':
-        return xiaoxiHappy;
+        return assets.happy;
       case 'blush':
-        return xiaoxiBlush;
+        return assets.blush;
       case 'normal':
       default:
-        return xiaoxiNormal;
+        return assets.normal;
     }
   };
 
@@ -149,6 +162,7 @@ export default function ChatBox({
   onRelationshipUpdateClick,
   onPlayVoice,
   speakingMessageId = null,
+  characterSkin = 'xiaoxi',
 }) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
@@ -292,6 +306,7 @@ export default function ChatBox({
                 streaming={isStreaming}
                 onPlayVoice={onPlayVoice}
                 isSpeaking={speakingMessageId === msg.id}
+                characterSkin={characterSkin}
               />
             );
           }

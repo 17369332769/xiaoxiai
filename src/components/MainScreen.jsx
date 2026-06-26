@@ -1,7 +1,19 @@
 import * as React from 'react';
-import xiaoxiNormal from '../assets/xiaoxi_normal.jpg';
-import xiaoxiHappy from '../assets/xiaoxi_happy.jpg';
-import xiaoxiBlush from '../assets/xiaoxi_blush.jpg';
+
+// 小希 立绘
+import xiaoxiNormal from '../assets/characters/xiaoxi/normal.jpg';
+import xiaoxiHappy from '../assets/characters/xiaoxi/happy.jpg';
+import xiaoxiBlush from '../assets/characters/xiaoxi/blush.jpg';
+
+// 小雅 立绘
+import xiaoyaNormal from '../assets/characters/xiaoya/normal.png';
+import xiaoyaHappy from '../assets/characters/xiaoya/happy.png';
+import xiaoyaBlush from '../assets/characters/xiaoya/blush.png';
+
+const CHARACTER_ASSETS = {
+  xiaoxi: { normal: xiaoxiNormal, happy: xiaoxiHappy, blush: xiaoxiBlush },
+  xiaoya: { normal: xiaoyaNormal, happy: xiaoyaHappy, blush: xiaoyaBlush },
+};
 
 const { useEffect, useRef, useState } = React;
 const RELATIONSHIP_FILTERS = [
@@ -29,12 +41,14 @@ export default function MainScreen({
   energy,
   mood,
   avatarState,
+  characterSkin = 'xiaoxi',
   relationshipSummary = '',
   relationshipHighlights = [],
   relationshipRecentUpdates = [],
   hasFreshRelationshipUpdate = false,
   relationshipCardFocusToken = 0,
 }) {
+  const assets = CHARACTER_ASSETS[characterSkin] || CHARACTER_ASSETS.xiaoxi;
   const [clickHearts, setClickHearts] = useState([]);
   const [isRelationshipCardFocused, setIsRelationshipCardFocused] = useState(false);
   const [activeHistoryFilter, setActiveHistoryFilter] = useState('all');
@@ -47,16 +61,16 @@ export default function MainScreen({
   const maxAffection = 100 + (level - 1) * 50;
   const affectionPercent = Math.min(100, (affection / maxAffection) * 100);
 
-  // Avatar image source based on state
+  // Avatar image source based on state and selected character skin
   const getAvatarSrc = () => {
     switch (avatarState) {
       case 'happy':
-        return xiaoxiHappy;
+        return assets.happy;
       case 'blush':
-        return xiaoxiBlush;
+        return assets.blush;
       case 'normal':
       default:
-        return xiaoxiNormal;
+        return assets.normal;
     }
   };
 

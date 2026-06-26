@@ -26,6 +26,18 @@ function App() {
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
 
+  // Character skin selection — pure visual, AI persona stays as 小希
+  const [characterSkin, setCharacterSkin] = useState(() => {
+    try { return localStorage.getItem('xxa_character_skin') || 'xiaoxi'; } catch { return 'xiaoxi'; }
+  });
+  const switchCharacter = () => {
+    setCharacterSkin((prev) => {
+      const next = prev === 'xiaoxi' ? 'xiaoya' : 'xiaoxi';
+      try { localStorage.setItem('xxa_character_skin', next); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   // Open wallet / transaction history and refresh the ledger
   const openWallet = () => {
     setIsWalletOpen(true);
@@ -122,6 +134,7 @@ function App() {
           energy={store.energy}
           mood={store.mood}
           avatarState={store.avatarState}
+          characterSkin={characterSkin}
           relationshipSummary={store.relationshipSummary}
           relationshipHighlights={store.relationshipHighlights}
           relationshipRecentUpdates={store.relationshipRecentUpdates}
@@ -142,6 +155,7 @@ function App() {
             onRelationshipUpdateClick={focusRelationshipCard}
             onPlayVoice={store.playVoice}
             speakingMessageId={store.speakingMessageId}
+            characterSkin={characterSkin}
           />
 
           {/* Action Menu (Shop items & Tasks) */}
@@ -154,6 +168,8 @@ function App() {
             openMemory={openMemory}
             openTheme={openTheme}
             openAuth={openAuth}
+            characterSkin={characterSkin}
+            onSwitchCharacter={switchCharacter}
             checkinStreak={store.checkinStreak}
             accountBound={store.account?.bound}
             isInteractionLocked={store.isSyncing}
