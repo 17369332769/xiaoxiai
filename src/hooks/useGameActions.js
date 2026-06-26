@@ -155,6 +155,14 @@ export function useGameActions({
             setChatHistory((prev) => prev.map((msg) => (
               msg.id === tempAiId ? { ...msg, text: streamedText } : msg
             )));
+          } else if (event === 'reset') {
+            // A tool round streamed a short lead-in before the skill call surfaced;
+            // clear that preview so only the upcoming tool-grounded answer shows.
+            streamedText = '';
+            if (!isMounted()) return;
+            setChatHistory((prev) => prev.map((msg) => (
+              msg.id === tempAiId ? { ...msg, text: '' } : msg
+            )));
           } else if (event === 'done') {
             if (!isMounted()) return;
             const aiMessage = payload.aiMessage;

@@ -78,6 +78,7 @@ function createControllableSse() {
       },
     },
     sendDelta: (text) => deliver({ value: encoder.encode(sseFrame('delta', { text })), done: false }),
+    sendReset: () => deliver({ value: encoder.encode(sseFrame('reset', {})), done: false }),
     sendDone: (payload) => deliver({ value: encoder.encode(sseFrame('done', payload)), done: false }),
     close: () => deliver({ value: undefined, done: true }),
   };
@@ -435,6 +436,57 @@ describe('useGameActions', () => {
     expect(finalMessage).toBeTruthy();
     expect(finalMessage.streamed).toBe(true);
     expect(finalMessage.text).toBe('你好呀，亲爱的～');
+    expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
+  });
+
+  test('a reset frame clears the streamed tool lead-in before the grounded answer', async () => {
+    const stream = createControllableSse();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/chat/stream') {
+        return Promise.resolve(stream.response);
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const { result } = renderHook(() => useGameActionsHarness());
+
+    let sendPromise;
+    await act(async () => {
+      sendPromise = result.current.sendMessage('北京天气怎么样？');
+    });
+
+    const placeholder = () => result.current.chatHistory.find((msg) => msg.sender === 'ai' && msg.streaming);
+
+    // A tool-call lead-in streams first (DeepSeek prefixes the call with one).
+    stream.sendDelta('好的，我来查一下~');
+    await flushStream();
+    expect(placeholder().text).toBe('好的，我来查一下~');
+
+    // The reset clears that preview before the tool-grounded answer arrives.
+    stream.sendReset();
+    await flushStream();
+    expect(placeholder().text).toBe('');
+
+    // The real, weather-grounded answer streams in cleanly.
+    stream.sendDelta('北京今天晴，记得多喝水哦~');
+    await flushStream();
+    expect(placeholder().text).toBe('北京今天晴，记得多喝水哦~');
+
+    await act(async () => {
+      stream.sendDone({
+        aiMessage: { id: 'ai-reset-1', sender: 'ai', text: '北京今天晴，记得多喝水哦~', avatarState: 'happy', timestamp: '10:30' },
+        user: { level: 1, affection: 12, energy: 78, mood: 73, coins: 200 },
+        tasks: [],
+        systemMessages: [],
+      });
+      stream.close();
+      const success = await sendPromise;
+      expect(success).toBe(true);
+    });
+
+    const finalMessage = result.current.chatHistory.find((msg) => msg.id === 'ai-reset-1');
+    expect(finalMessage).toBeTruthy();
+    expect(finalMessage.text).toBe('北京今天晴，记得多喝水哦~');
     expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
   });
 

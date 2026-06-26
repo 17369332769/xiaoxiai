@@ -313,3 +313,22 @@
 **目录重构**：`backend/` 从 41 个扁平 `.js` 整理为分层结构——`core/`（db / logger / middleware / httpUtils / appError / envUtils / resolveUser）、`routes/`（10 个 `*Routes.js` 端点注册）、`services/`（领域逻辑，含 `ai/`、`memory/` 子域）、`config/`（gameConfig）；`server.js` / `app.js` / `skills/` / `tests/` / `*.md` 保留根。用 Node codemod 自动 `git mv` 39 文件 + 重写 **59 文件中 176 处**相对 import（正确区分 `backend/gameConfig.js` 与 `shared/gameConfig.js`）。两处 codemod 边界手工修正：① `apiRoutes`→`./skills/` 移到 routes/ 后应为 `../skills/`；② `skills/registry` 对**同名** `webSearch.js`（技能默认导出 vs 服务命名导出）的冲突被误改，还原为同目录技能。`src/` 已分层，不动。
 
 **验证**：`npm run verify` 全绿——前端 **82** + 后端 **184** + build，EXIT 0（测试数重构前后不变，纯结构变更）。README「项目结构」已同步。
+
+## 第23轮（缺陷修复：流式聊天接入技能 + 启用联网搜索）
+
+> 2026-06-26。用户反馈"对话好像不能使用技能了（如查天气）"。诊断：前端聊天默认走 `/api/chat/stream`，而流式路径 `generateAiResponseStream` **不带 `tools`**（注释明写 "plain-text (no tools)"），技能只存在于非流式 `/api/chat`（前端仅作兜底、不使用）→ 真实对话里天气/搜索/记忆/状态全部不触发。次因：`web_search` 因 `BOCHA_API_KEY` 未配置而禁用。
+
+**改动文件**：`backend/routes/apiRoutes.js`、`backend/skills/registry.js`、`src/hooks/useGameActions.js`、`backend/tests/api.test.js`（+2 例）、`src/hooks/useGameActions.test.jsx`（+1 例）、`backend/.env`（配 `BOCHA_API_KEY`，gitignored 不提交）。
+
+**落地项**：
+- 流式路径改为 **tool-enabled 流式循环**：每轮带 `tools` 真流式调用；无工具的普通对话保持逐字真流式（TTFT 不退化）。工具轮执行技能后再真流式输出最终答案，沿用 `MAX_TOOL_ROUNDS=3` / `MAX_TOOL_CALLS_PER_TURN=5` 预算 + 强制 compose 兜底。
+- **`reset` SSE 事件**：DeepSeek 在 tool call 前会先吐一句开场白（实测"好的，我来查一下…"），检测到 tool_calls 时发 `reset` 让前端清空该预览，再流式打出技能落地的答案；`done` 帧的权威文本为最终兜底。前端 `useGameActions.js` 新增 `reset` 分支清 `streamedText` 与占位文本。
+- `getSkillsPromptBlock({ json })`：加纯文本变体（流式提示词要求只输出正文、不输出 JSON），默认 `json:true` 与原 JSON 路径字节级一致。`buildStreamSystemPrompt` 注入技能提示块。
+- 配置 `BOCHA_API_KEY` 启用 `web_search`。
+
+**对抗式审查 + 实证验证**（只读 Explore 单 agent + 真实 DeepSeek 探针）：审查 8 项判定正确，唯一标红"`content: roundText || null` 不被 API 接受"经**真实 DeepSeek 探针实测推翻**——`null` 与 `''` 均被接受，且 `null` 是 OpenAI 协议 tool-call assistant 消息的规范写法，保留不改。
+- **端到端实测**（真实流式端点 + DeepSeek + Bocha）：问天气→`weather lookup completed {上海}`、回复真实数据 25°C、1 个 reset 帧；联网搜索→`web search completed {results:5}`、当月真实电影列表；普通对话→27 delta、**0 reset**、纯真流式无 regression。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **83** + 后端 **186** + build，EXIT 0。
+
+**git**：均未提交，处置交用户决定（`backend/.env` 含真实 key，gitignored）。

@@ -1100,6 +1100,117 @@ test('generateAiResponseStream streams the local fallback when no model is confi
   assert.equal(deltas.join(''), response.reply);
 });
 
+// Build a streamed tool-call response: an optional lead-in, then the tool call's
+// arguments fragmented across chunks (the way DeepSeek emits them), then a
+// finish_reason. Mirrors the real streamed tool_calls shape for the unit test.
+function streamedToolRound(leadIn, id, name, args) {
+  const argStr = JSON.stringify(args);
+  const mid = Math.ceil(argStr.length / 2);
+  const chunks = [];
+  if (leadIn) chunks.push({ choices: [{ delta: { content: leadIn } }] });
+  chunks.push({ choices: [{ delta: { tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: '' } }] } }] });
+  chunks.push({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: argStr.slice(0, mid) } }] } }] });
+  chunks.push({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: argStr.slice(mid) } }] } }] });
+  chunks.push({ choices: [{ finish_reason: 'tool_calls', delta: {} }] });
+  return chunks;
+}
+
+test('generateAiResponseStream streams a tool call, resets the lead-in, then streams the answer', async () => {
+  const deltas = [];
+  let resets = 0;
+  const calls = [];
+  let round = 0;
+  const openai = {
+    chat: {
+      completions: {
+        create: async (payload) => {
+          calls.push(payload);
+          if (round++ === 0) {
+            return streamedToolRound('好的，我来查一下~', 'c1', 'get_weather', { city: '北京' });
+          }
+          return [
+            { choices: [{ delta: { content: '北京今天晴，' } }] },
+            { choices: [{ delta: { content: '记得多喝水哦~' } }] },
+          ];
+        },
+      },
+    },
+  };
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      current_condition: [{ temp_C: '27', FeelsLikeC: '27', humidity: '40', lang_zh: [{ value: '晴' }] }],
+      nearest_area: [{ areaName: [{ value: '北京' }] }],
+    }),
+  });
+  try {
+    const response = await generateAiResponseStream(
+      openai,
+      { summary: '', energy: 80, mood: 70, level: 1 },
+      'stream_tool_user',
+      '北京天气怎么样？',
+      { info() {}, warn() {}, error() {} },
+      (delta) => deltas.push(delta),
+      () => { resets += 1; },
+    );
+
+    assert.equal(response.reply, '北京今天晴，记得多喝水哦~');
+    assert.equal(response.replaced, false);
+    assert.equal(calls.length, 2, 'one tool round + one answer round');
+    // Round 0 advertised the tools (so the model could call get_weather).
+    assert.ok(Array.isArray(calls[0].tools) && calls[0].tools.some((t) => t.function.name === 'get_weather'));
+    // The streamed lead-in was cleared once before the grounded answer streamed.
+    assert.equal(resets, 1);
+    // The weather result was fed back with the matching tool_call_id before round 2.
+    const toolMsgs = calls[1].messages.filter((m) => m.role === 'tool');
+    assert.equal(toolMsgs.length, 1);
+    assert.equal(toolMsgs[0].tool_call_id, 'c1');
+    assert.match(toolMsgs[0].content, /晴/);
+    // Both the lead-in and the final answer were emitted as live deltas.
+    assert.ok(deltas.includes('好的，我来查一下~'), 'lead-in streamed before reset');
+    assert.ok(deltas.includes('北京今天晴，'), 'final answer streamed after tool');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('generateAiResponseStream answers in one streamed round (tools advertised, none called)', async () => {
+  const deltas = [];
+  let resets = 0;
+  const calls = [];
+  const openai = {
+    chat: {
+      completions: {
+        create: async (payload) => {
+          calls.push(payload);
+          return [
+            { choices: [{ delta: { content: '在的呀，' } }] },
+            { choices: [{ delta: { content: '一直陪着你~' } }] },
+          ];
+        },
+      },
+    },
+  };
+
+  const response = await generateAiResponseStream(
+    openai,
+    { summary: '', energy: 80, mood: 70, level: 1 },
+    'stream_notool_user',
+    '在吗',
+    { info() {}, warn() {}, error() {} },
+    (delta) => deltas.push(delta),
+    () => { resets += 1; },
+  );
+
+  assert.equal(response.reply, '在的呀，一直陪着你~');
+  assert.equal(resets, 0, 'no tool round means no reset');
+  assert.equal(calls.length, 1, 'a direct answer is a single streamed round');
+  assert.ok(Array.isArray(calls[0].tools) && calls[0].tools.length > 0, 'tools are still advertised');
+  assert.deepEqual(deltas, ['在的呀，', '一直陪着你~']);
+});
+
 test('POST /api/chat/stream emits SSE delta + done events with an authoritative aiMessage', async () => {
   const userId = 'sse_user';
   await postJson('/api/user/sync', { userId });

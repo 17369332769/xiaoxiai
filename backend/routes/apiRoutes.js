@@ -453,7 +453,7 @@ export function buildStreamSystemPrompt(user, memories, latestUserText) {
 
 [人设与情境 (Persona & Context)]
 ${persona.promptBlock}
-
+${getSkillsPromptBlock({ json: false })}
 [关系摘要]
 前文历史与关系大意摘要: "${user.summary || '无'}"
 
@@ -476,12 +476,21 @@ export function deriveEmotion(text) {
 
 // Streaming counterpart of generateAiResponse. Calls onDelta(textChunk) as tokens
 // arrive and resolves to the final { reply, emotion, affection_bump, mood_bump,
-// replaced }. The streaming path is plain-text (no tools), so emotion is derived
-// server-side and the affection/mood bumps are modest server defaults. `replaced`
-// is true when the streamed text was blocked by the output safety screen and the
-// authoritative reply differs from what was streamed.
-export async function generateAiResponseStream(openai, user, userId, text, logger, onDelta) {
+// replaced }. Emotion is derived server-side (the model streams plain text, not the
+// structured emotion field) and the affection/mood bumps are modest server defaults.
+// `replaced` is true when the streamed text was blocked by the output safety screen
+// and the authoritative reply differs from what was streamed.
+//
+// Skills (tools) are supported: each round is a streamed, tools-enabled call. The
+// model either streams its answer directly (no tool call) or emits skill call(s),
+// which we execute via the registry and feed back before streaming the next round.
+// DeepSeek may prefix a tool call with a short lead-in ("好的，我来查一下…"); we stream
+// it live, then fire onReset() so the client clears that preview before the real,
+// tool-grounded answer streams in. The `done` frame's authoritative text is the
+// final word either way.
+export async function generateAiResponseStream(openai, user, userId, text, logger, onDelta, onReset) {
   const emit = typeof onDelta === 'function' ? onDelta : () => {};
+  const reset = typeof onReset === 'function' ? onReset : () => {};
   const constrained = getStateConstrainedReply(user);
   if (constrained && user.energy <= 15) {
     await emitLocalReplyInChunks(constrained.reply, emit);
@@ -512,28 +521,102 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
     });
 
     const model = process.env.OPENAI_MODEL_NAME || 'deepseek-chat';
-    const stream = await openai.chat.completions.create({
-      model,
-      messages: llmMessages,
-      max_tokens: LLM_MAX_TOKENS,
-      stream: true,
-      timeout: LLM_TIMEOUT_MS,
-    });
+
+    // One streamed chat call. Emits visible text deltas live (typewriter) and, when
+    // tools are advertised, reconstructs any streamed tool_calls (id/name once,
+    // arguments concatenated by index). Content is only emitted while no tool call
+    // has started this round — DeepSeek sends a tool call's lead-in before the call
+    // itself, so the caller resets that preview if the round turns out to be a tool
+    // round. Returns { text, toolCalls }.
+    const streamRound = async (messages, tools) => {
+      const stream = await openai.chat.completions.create({
+        model,
+        messages,
+        ...(tools ? { tools, tool_choice: 'auto' } : {}),
+        max_tokens: LLM_MAX_TOKENS,
+        stream: true,
+        timeout: LLM_TIMEOUT_MS,
+      });
+      let acc = '';
+      const toolAcc = new Map(); // call index -> { id, name, args }
+      for await (const chunk of stream) {
+        const delta = chunk?.choices?.[0]?.delta || {};
+        if (delta.content && toolAcc.size === 0) {
+          acc += delta.content;
+          emit(delta.content);
+        }
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            const entry = toolAcc.get(idx) || { id: '', name: '', args: '' };
+            if (tc.id) entry.id = tc.id;
+            if (tc.function?.name) entry.name = tc.function.name;
+            if (tc.function?.arguments) entry.args += tc.function.arguments;
+            toolAcc.set(idx, entry);
+          }
+        }
+      }
+      const toolCalls = [...toolAcc.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, e]) => ({ id: e.id, type: 'function', function: { name: e.name, arguments: e.args || '{}' } }));
+      return { text: acc.trim(), toolCalls };
+    };
 
     let full = '';
-    for await (const chunk of stream) {
-      const piece = chunk?.choices?.[0]?.delta?.content || '';
-      if (piece) {
-        full += piece;
-        emit(piece);
+    const enabledSkills = getEnabledSkills();
+
+    if (enabledSkills.length === 0) {
+      // No skills available (master switch off / all gated off): single streamed call.
+      ({ text: full } = await streamRound(llmMessages, null));
+    } else {
+      // Tool-enabled streaming loop, mirroring generateAiResponse's tool budget. Each
+      // round streams a tools-on call; a round with no tool_calls is the final answer.
+      const tools = enabledSkills.map((skill) => skill.schema);
+      const ctx = { user, userId, logger };
+      let totalToolCalls = 0;
+      let answered = false;
+
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        const { text: roundText, toolCalls } = await streamRound(llmMessages, tools);
+
+        if (toolCalls.length === 0) {
+          // Direct answer — already streamed live this round.
+          full = roundText;
+          answered = true;
+          break;
+        }
+
+        // Tool round: clear any lead-in we streamed before the call surfaced, then
+        // record the assistant tool-call turn and execute each requested skill.
+        if (roundText) reset();
+        llmMessages.push({ role: 'assistant', content: roundText || null, tool_calls: toolCalls });
+        for (const call of toolCalls) {
+          if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+            llmMessages.push({ role: 'tool', tool_call_id: call.id, content: '（本轮技能调用次数已达上限，已跳过）' });
+            continue;
+          }
+          totalToolCalls += 1;
+          const toolResult = await executeSkill(call.function?.name, call.function?.arguments, ctx);
+          llmMessages.push({ role: 'tool', tool_call_id: call.id, content: toolResult });
+        }
+        if (totalToolCalls >= MAX_TOOL_CALLS_PER_TURN) {
+          break;
+        }
+      }
+
+      if (!answered) {
+        // Loop ended (round/call cap) while the model still wanted tools: force one
+        // final streamed answer with tools removed so we always return a reply.
+        ({ text: full } = await streamRound(llmMessages, null));
       }
     }
-    full = full.trim();
+
     if (!full) throw new Error('empty streamed reply');
 
-    // Output safety net. Streaming mode uses no tools (no injected tool content),
-    // and input was already screened, so this rarely fires — but if it does, the
-    // authoritative reply is replaced and the client swaps the previewed text.
+    // Output safety net. With skills enabled the model also sees untrusted tool
+    // content (search/recall results) that could prompt-inject its reply, so we
+    // re-screen the streamed text; on a hit the authoritative reply is replaced and
+    // the client swaps the previewed text via the `done` frame.
     const safety = checkContentSafety(full);
     if (!safety.safe) {
       logger?.warn?.('Blocked unsafe streamed reply', { userId, category: safety.category });
@@ -782,7 +865,15 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
     let aiResponse;
     try {
-      aiResponse = await generateAiResponseStream(openai, user, userId, text, logger, (delta) => send('delta', { text: delta }));
+      aiResponse = await generateAiResponseStream(
+        openai,
+        user,
+        userId,
+        text,
+        logger,
+        (delta) => send('delta', { text: delta }),
+        () => send('reset', {}),
+      );
     } catch (error) {
       logger.error('Streamed chat generation failed', { userId, error: error.message });
       send('error', { message: '生成回复时出错了，请稍后再试。' });
