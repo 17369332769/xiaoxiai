@@ -334,3 +334,30 @@
 **git**：提交 `f4c3dea` 并推送到 `origin/main`（`backend/.env` 含真实 key，gitignored 未提交）。
 
 **追加修复（同轮）**：用户实测发现"现在 openai 有什么新动作"被模型凭记忆编旧闻（GPT-4o mini）且假装"打开手机查了一下"，日志确认**未真正调用** web_search（天气类问题正常触发，说明机制 OK，是模型在 `tool_choice:'auto'` 下的调用决策问题）。强化 `web_search` 的工具 `description`（`services/ai/webSearch.js`）与 `promptHint`（`skills/webSearch.js`）：明确"训练知识可能过时、涉及最新/近期客观信息必须先搜"，并新增反"假装查询"规则（想说"我查一下/打开手机看看"就必须真调用 web_search）。实测同一句话现已真触发：`web search completed {OpenAI 最新动态 2026年6月}`，回复为当前真实信息。verify 仍全绿。
+
+**追加修复 2（同轮，前端）**：用户问"回复能不能发网址（如 openai 官网）"。实测模型本就会输出 URL（`https://openai.com`），后端也不过滤，但前端 `ChatBox.jsx` 把消息当纯文本渲染、链接点不动。新增 `linkifyText`（正则切分 http(s) URL → `<a target=_blank rel=noopener>`），应用到 AI 与用户气泡；新增 ChatBox 测试（URL → 可点击新标签页链接）。前端 84 测试全绿。
+
+## 第24轮（新玩法：恋爱剧情系统 Story）
+
+> 2026-06-26。用户 `/goal 添加剧情`。设计为**随羁绊等级解锁的剧情章节**，弹窗里逐幕阅读（视觉小说式），读完一次性领币奖励，进度按用户存储。结构对称复制现有「主题换肤(themes)」功能。
+
+**新增文件**：`backend/services/storyStore.js`、`backend/routes/storyRoutes.js`、`backend/tests/stories.test.js`（8 例）、`src/components/StoryModal.jsx`、`src/components/StoryModal.test.jsx`（3 例）。
+**改动文件**：`shared/gameConfig.js`（STORIES 目录：5 章，requiredLevel 1/2/3/5/8，reward 100~500 币，含逐幕 scenes + getStoryById）、`backend/core/db.js`（`user_story_progress` 表）、`backend/app.js`（注册 storyRoutes）、`backend/routes/apiRoutes.js`（sync 返回 `stories:{read,level}`）、`backend/services/userExportDelete.js`（USER_CHILD_TABLES 加 user_story_progress）、`src/components/ActionMenu.jsx`（📖 恋爱剧情入口）、`src/App.jsx`（openStory + StoryModal 装配）、`src/hooks/useGameStore.js`（readStories 状态 + loadStories/claimStory + sync 加载 + 暴露）。
+
+**落地项**：
+- 端点 `POST /api/stories`（目录 + read + level）、`POST /api/stories/claim`（读完领奖）。解锁门槛=后端校验 `user.level >= requiredLevel`（防客户端绕过）。
+- 领奖原子幂等：`INSERT OR IGNORE` 的 `changes` 作闸门，首次完成才 `creditCoins` + 记流水；并发/重读绝不双发（`rewarded:false`）。
+- StoryModal 双视图：列表（锁定/未读/已读三态）+ 阅读器（逐幕、上一句/下一句、busy 防重复、读完领心意）。
+
+**对抗式审查**（只读 Explore 单 agent）：9 项判定正确（建表/级联、INSERT OR IGNORE 原子性、等级门槛防绕过、信封一致、阅读器边界、busy 防抖、函数式 setState 兜底、sync 集成、装配）。采纳 1 项修复：🔴 `creditCoins` 在用户被并发删除的极端情形返回 null → 会写 `balance:null` 流水且返回 `coins:null` 却 `rewarded:true` 的畸形信封；加 `Number.isFinite` 守卫，非法则 `AppError(500, STORY_REWARD_FAILED)`。
+
+**端到端实测**（真实端点）：目录 5 章/首章 5 幕、读完首章 200→300 领 100 币、重复领幂等不再发、锁定章节返回 `STORY_LOCKED`。
+
+**验证**：`npm run verify` 全绿——check:secrets + eslint 干净 + 前端 **87** + 后端 **194** + build，EXIT 0。
+
+**互动升级（同轮）**：用户反馈"剧情没有互动"。把剧情从纯阅读升级为**有玩家选择的互动剧情**：scene 新增 `{who:'choice', text, options:[{text,reply,emotion,affection}]}` 类型；阅读器在选择点展示选项、未选不能前进、选后显示小希的不同反应（reply + emotion）；**选择按服务端校验后加好感**（`affectionFromChoices` 只信静态 catalog + 下标校验，走 `addAffection`，首次完成闸门保证只发一次、含升级系统消息）。`claimStory(storyId, choices)` 返回 user 快照 + `reward{coins,affection}` + systemMessages，前端走 `applyUserSnapshot` + 追加升级消息。5 段剧情各加 1 个选择点。新增后端 2 例（选择加好感 / 非法下标忽略）、前端测试改造为覆盖完整选择流程。
+- **对抗式审查**（只读 Explore）：6 项通过（防客户端刷好感、并发幂等、快照一致性、阅读器边界等）。采纳 2 项修复：① StoryModal 在 claim 失败(null)时不再强制关闭阅读器，保留可重试；② coins 已发后 `addAffection` 抛错不再误返 500——coins 为真值已发、好感为 best-effort，改 try/catch 记日志、`affectionGain` 归零如实上报。
+- **端到端实测**：选「一起走吧」(好感+3) 读完 rainy_meet → 领 100 币 + 好感 10→13；重复读幂等不再发奖、好感不变。
+- **验证**：`npm run verify` 全绿——前端 **87** + 后端 **196** + build，EXIT 0。
+
+**git**：未提交（连同上一轮 linkify 改动一并待用户确认推送）。

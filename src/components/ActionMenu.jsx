@@ -10,6 +10,7 @@ export default function ActionMenu({
   openWallet,
   openMemory,
   openTheme,
+  openStory,
   openAuth,
   characterSkin = 'xiaoxi',
   onSwitchCharacter,
@@ -158,6 +159,12 @@ export default function ActionMenu({
           <button onClick={openTheme} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🎀</span>
             <span>形象换装</span>
+          </button>
+
+          {/* Story / 剧情 Button */}
+          <button onClick={openStory} className="btn-secondary action-btn" disabled={isInteractionLocked}>
+            <span className="action-icon">📖</span>
+            <span>恋爱剧情</span>
           </button>
 
           {/* Character Skin Switch Button */}

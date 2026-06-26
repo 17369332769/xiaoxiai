@@ -91,6 +91,22 @@ describe('ChatBox', () => {
     expect(container.textContent).toContain('你好呀，亲爱的');
   });
 
+  test('renders a URL in an AI reply as a clickable new-tab link', () => {
+    render(
+      <ChatBox
+        chatHistory={[
+          { id: 'ai-url', sender: 'ai', text: 'OpenAI 官网是 https://openai.com 哦～', avatarState: 'normal', streaming: true, timestamp: '10:21' },
+        ]}
+        sendMessage={vi.fn()}
+      />
+    );
+
+    const link = screen.getByRole('link', { name: 'https://openai.com' });
+    expect(link.getAttribute('href')).toBe('https://openai.com');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
   test('clicking a relationship update system message triggers the focus callback', () => {
     const onRelationshipUpdateClick = vi.fn();
 

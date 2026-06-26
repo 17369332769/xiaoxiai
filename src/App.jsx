@@ -9,6 +9,7 @@ import WalletModal from './components/WalletModal';
 import AuthModal from './components/AuthModal';
 import MemoryModal from './components/MemoryModal';
 import ThemeModal from './components/ThemeModal';
+import StoryModal from './components/StoryModal';
 import CelebrateEffect from './components/CelebrateEffect';
 import NotificationCenter from './components/NotificationCenter';
 import SyncStatusBanner from './components/SyncStatusBanner';
@@ -25,6 +26,7 @@ function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [isThemeOpen, setIsThemeOpen] = useState(false);
+  const [isStoryOpen, setIsStoryOpen] = useState(false);
 
   // Character skin selection — pure visual, AI persona stays as 小希
   const [characterSkin, setCharacterSkin] = useState(() => {
@@ -56,6 +58,13 @@ function App() {
     setIsThemeOpen(true);
     store.loadThemes();
     store.track('open_theme');
+  };
+
+  // Open the story / 剧情 picker and refresh the read state
+  const openStory = () => {
+    setIsStoryOpen(true);
+    store.loadStories();
+    store.track('open_story');
   };
 
   const openAuth = () => {
@@ -167,6 +176,7 @@ function App() {
             openWallet={openWallet}
             openMemory={openMemory}
             openTheme={openTheme}
+            openStory={openStory}
             openAuth={openAuth}
             characterSkin={characterSkin}
             onSwitchCharacter={switchCharacter}
@@ -255,6 +265,16 @@ function App() {
         coins={store.coins}
         unlockTheme={store.unlockTheme}
         equipTheme={store.equipTheme}
+        notify={store.notify}
+      />
+
+      <StoryModal
+        isOpen={isStoryOpen}
+        onClose={() => setIsStoryOpen(false)}
+        stories={store.STORIES}
+        readStories={store.readStories}
+        level={store.level}
+        claimStory={store.claimStory}
         notify={store.notify}
       />
 

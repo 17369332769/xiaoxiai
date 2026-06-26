@@ -9,6 +9,7 @@ import { registerMemoryRoutes } from './routes/memoryRoutes.js';
 import { registerTtsRoutes } from './routes/ttsRoutes.js';
 import { registerUserRoutes } from './routes/userRoutes.js';
 import { registerThemeRoutes } from './routes/themeRoutes.js';
+import { registerStoryRoutes } from './routes/storyRoutes.js';
 import { registerAdminRoutes } from './routes/adminRoutes.js';
 import { createPresenceTracker } from './services/presence.js';
 import { createResolveUser } from './core/resolveUser.js';
@@ -72,6 +73,7 @@ export function createApp({
   registerTtsRoutes(app, { resolveUser });
   registerUserRoutes(app, { resolveUser });
   registerThemeRoutes(app, { resolveUser, presence });
+  registerStoryRoutes(app, { resolveUser, presence });
   registerAdminRoutes(app, { adminToken, presence });
 
   app.use(createErrorHandler(logger));

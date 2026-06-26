@@ -319,6 +319,18 @@ async function initializeTables() {
       )
     `);
 
+    // Story episodes the user has finished reading (drives the one-time reward and
+    // the read/unread state in the 剧情 picker). Presence of a row = already read.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS user_story_progress (
+        user_id TEXT NOT NULL,
+        story_id TEXT NOT NULL,
+        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, story_id),
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `);
+
     await runColumnMigrations();
 
     const relationshipEventColumns = [

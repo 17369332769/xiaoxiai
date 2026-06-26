@@ -17,6 +17,32 @@ const CHARACTER_ASSETS = {
 
 const { useRef, useEffect, useState } = React;
 
+// Turn bare http(s) URLs inside message text into clickable links (new tab,
+// noopener). The model may include source / official-site URLs in its replies;
+// without this they render as inert plain text. Splitting on a capturing-group
+// regex keeps the matched URLs at the odd indices of the result.
+const URL_REGEX = /(https?:\/\/[^\s<>，。！？、；："'）)】》]+)/g;
+function linkifyText(text) {
+  const str = String(text ?? '');
+  if (!str || str.indexOf('http') === -1) return str;
+  return str.split(URL_REGEX).map((part, i) => (
+    i % 2 === 1
+      ? (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="chat-link"
+          style={{ color: 'var(--accent-gold, #ffd479)', textDecoration: 'underline', wordBreak: 'break-all' }}
+        >
+          {part}
+        </a>
+      )
+      : part
+  ));
+}
+
 const QUICK_PROMPTS = [
   '小希，你现在饿了吗？',
   '你最喜欢什么礼物呀？',
@@ -109,7 +135,7 @@ function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpe
         ))}
       </div>
       <div className="bubble bubble-ai">
-        {displayText}
+        {linkifyText(displayText)}
         {((animate && displayText.length < fullText.length) || streaming) && (
           <span className="typing-caret" aria-hidden="true">▍</span>
         )}
@@ -138,7 +164,7 @@ function UserMessage({ msg }) {
   return (
     <div className="message-row row-user">
       <div className="bubble bubble-user">
-        {msg.text}
+        {linkifyText(msg.text)}
         <div className="message-timestamp text-right">
           {msg.timestamp}
         </div>

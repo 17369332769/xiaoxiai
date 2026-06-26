@@ -5,6 +5,7 @@ import { getEffectiveFood, getEffectiveGifts, getEffectiveTippingTiers } from '.
 import { asyncHandler, generateId, sanitizeText, sendJson, validateChoice } from '../core/httpUtils.js';
 import { REQUIRE_REGISTRATION_OTP } from '../services/verification.js';
 import { getUserThemeState } from '../services/themeStore.js';
+import { getUserStoryState } from '../services/storyStore.js';
 import {
   addAffection,
   computeCheckinStreak,
@@ -719,6 +720,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     const relationship = await loadRelationshipProfile(userId);
     const account = await findAccountByUserId(userId);
     const themeState = await getUserThemeState(userId);
+    const storyState = await getUserStoryState(userId);
 
     sendJson(res, {
       user: serializeUser(user, {
@@ -740,6 +742,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
       // register form's verification-code field.
       requireRegistrationOtp: REQUIRE_REGISTRATION_OTP,
       themes: themeState,
+      stories: storyState,
     });
   }));
 

@@ -15,6 +15,7 @@ const USER_CHILD_TABLES = [
   { table: 'orders', column: 'user_id' },
   { table: 'events', column: 'user_id' },
   { table: 'user_themes', column: 'user_id' },
+  { table: 'user_story_progress', column: 'user_id' },
   { table: 'accounts', column: 'user_id' },
 ];
 

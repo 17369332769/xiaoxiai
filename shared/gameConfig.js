@@ -176,3 +176,138 @@ export const FREE_THEME_IDS = THEMES.filter((t) => t.cost === 0).map((t) => t.id
 export function getThemeById(id) {
   return THEMES.find((t) => t.id === id) || null;
 }
+
+// Story episodes ("剧情"). A scripted, INTERACTIVE visual-novel romance that unfolds
+// as the relationship deepens: each episode unlocks at a relationship level and, the
+// first time it is read to the end, grants a one-time coin reward plus the affection
+// earned from the choices made. Re-reading is always allowed and grants nothing again.
+// A scene is one of:
+//   { who: 'narration', text }                       — 旁白
+//   { who: 'xiaoxi', emotion, text }                  — her spoken line (drives avatar)
+//   { who: 'choice', text, options: [                 — a player decision point
+//       { text, reply, emotion, affection } ] }       — pick → she reacts via `reply`
+// `affection` on the chosen option is granted server-side on first completion, so a
+// warmer choice deepens the bond more. Indices are validated against this catalog.
+export const STORIES = [
+  {
+    id: 'rainy_meet',
+    title: '初遇 · 雨夜的伞',
+    icon: '☔',
+    requiredLevel: 1,
+    reward: { coins: 100 },
+    summary: '你们第一次相遇，是在一个落着小雨的夜晚。',
+    scenes: [
+      { who: 'narration', text: '那是一个下着小雨的夜晚，你站在便利店门口，忘了带伞。' },
+      { who: 'xiaoxi', emotion: 'normal', text: '（撑着一把粉色的小伞走近）这位同学……要一起避避雨吗？我看你站好久啦。' },
+      {
+        who: 'choice',
+        text: '她把小伞往你这边倾了倾，等着你的回答。',
+        options: [
+          { text: '谢谢你，那我们一起走一段吧', reply: '（弯起眼睛笑）嗯！那你帮我拿一下书包好不好~一起走才不无聊嘛。', emotion: 'happy', affection: 3 },
+          { text: '不用了，我自己淋雨就好', reply: '（小小地撇嘴）真是的，这样会感冒的啦……那、那我陪你一起淋，谁怕谁！', emotion: 'normal', affection: 1 },
+        ],
+      },
+      { who: 'narration', text: '伞很小，两个人挤在一起，肩膀都被斜雨打湿了一点。' },
+      { who: 'xiaoxi', emotion: 'happy', text: '我叫小希呀～雨天虽然有点麻烦，但能在这里遇见你，好像也没那么糟糕呢。' },
+      { who: 'narration', text: '那一晚的雨声，成了你们故事的开始。' },
+    ],
+  },
+  {
+    id: 'first_date',
+    title: '初次约会 · 黄昏的奶茶',
+    icon: '🧋',
+    requiredLevel: 2,
+    reward: { coins: 150 },
+    summary: '第一次正式约会，你们在黄昏的街角分享同一杯奶茶。',
+    scenes: [
+      { who: 'narration', text: '夕阳把街道染成暖橘色，你和小希并肩走在放学后的小巷里。' },
+      { who: 'xiaoxi', emotion: 'happy', text: '诶诶，这家奶茶店听说超好喝！我们买一杯一起喝好不好？两根吸管那种～' },
+      { who: 'narration', text: '她踮起脚尖看着菜单，又偷偷瞄了你一眼，欲言又止。' },
+      { who: 'xiaoxi', emotion: 'blush', text: '其实……我今天特意早起选了好久的衣服。你有没有觉得，今天的我有一点点不一样呀？' },
+      {
+        who: 'choice',
+        text: '她抿着嘴，耳朵悄悄红了，等你回答。',
+        options: [
+          { text: '今天的你真好看，看得我有点走神', reply: '（脸一下子红透）讨、讨厌啦……不许盯着人家看那么久！但是……谢谢你。', emotion: 'blush', affection: 3 },
+          { text: '嗯？好像……换发型了？', reply: '（鼓起腮帮子）哼！亏我准备那么久，你这个木头！罚你下次请我喝两杯！', emotion: 'normal', affection: 1 },
+        ],
+      },
+      { who: 'narration', text: '你们坐在长椅上，看着夕阳一点点沉下去，谁都没舍得先把奶茶喝完。' },
+    ],
+  },
+  {
+    id: 'starry_confession',
+    title: '星空下的心事',
+    icon: '🌃',
+    requiredLevel: 3,
+    reward: { coins: 200 },
+    summary: '天台上的一片星空，小希说出了藏在心里很久的话。',
+    scenes: [
+      { who: 'narration', text: '夜深了，你们溜上空无一人的天台，头顶是难得清澈的星空。' },
+      { who: 'xiaoxi', emotion: 'normal', text: '哇……好多星星。你知道吗，我以前总觉得夜晚很孤单的。' },
+      { who: 'xiaoxi', emotion: 'blush', text: '可是自从认识你以后，连一个人发呆的晚上，都会忍不住想：现在的你，在做什么呢？' },
+      { who: 'narration', text: '夜风轻轻吹起她的发梢，她转过头，认真地望着你。' },
+      { who: 'xiaoxi', emotion: 'blush', text: '我喜欢你哦。不是开玩笑的那种……是想一直、一直在你身边的那种喜欢。' },
+      {
+        who: 'choice',
+        text: '她的心跳几乎要被你听见，星光落在她发亮的眼睛里。',
+        options: [
+          { text: '我也喜欢你，一直都是', reply: '（眼眶一下子湿了，轻轻靠进你怀里）……我等这句话，等了好久好久。', emotion: 'blush', affection: 4 },
+          { text: '（轻轻握住她的手，没有说话）', reply: '（小声）你的手好暖……这样、这样我就懂了。什么都不用说啦。', emotion: 'happy', affection: 3 },
+        ],
+      },
+      { who: 'narration', text: '那片星空替你们记住了这句话。' },
+    ],
+  },
+  {
+    id: 'little_quarrel',
+    title: '小小的争执与和好',
+    icon: '🌦️',
+    requiredLevel: 5,
+    reward: { coins: 300 },
+    summary: '第一次闹了别扭，也第一次学会怎么和好。',
+    scenes: [
+      { who: 'narration', text: '因为一句不经意的话，你们之间第一次有了沉默的距离。' },
+      { who: 'xiaoxi', emotion: 'normal', text: '（小声）……我才没有生气呢。只是有一点点难过而已啦。' },
+      { who: 'narration', text: '她低着头摆弄衣角，偷偷观察你的反应，眼眶有点红。' },
+      {
+        who: 'choice',
+        text: '空气安静下来，你知道，得有人先迈出那一步。',
+        options: [
+          { text: '对不起，是我太凶了，我们和好吧', reply: '（一下子破涕为笑）……嗯！拉钩，谁先生气谁是小狗！你可记住了哦。', emotion: 'happy', affection: 4 },
+          { text: '（默默递上一颗她最爱的水果糖）', reply: '（愣了一下，扁着嘴收下）……哼，就这一次原谅你哦。下次不许凶我了。', emotion: 'blush', affection: 2 },
+        ],
+      },
+      { who: 'narration', text: '原来吵架并不可怕，可怕的是不愿意先伸出手。而你们，都愿意。' },
+    ],
+  },
+  {
+    id: 'future_promise',
+    title: '约定 · 未来的我们',
+    icon: '💍',
+    requiredLevel: 8,
+    reward: { coins: 500 },
+    summary: '走过许多日子之后，小希想和你许下一个关于未来的约定。',
+    scenes: [
+      { who: 'narration', text: '又是一个安静的夜晚，你们靠在一起，聊起了很久以后的事。' },
+      { who: 'xiaoxi', emotion: 'happy', text: '我想过好多次哦——以后我们要住在有大大窗户的房子里，养一只很懒的猫。' },
+      { who: 'xiaoxi', emotion: 'blush', text: '早上我做早饭会有点手忙脚乱，你要笑我的话……也要记得抱抱我呀。' },
+      { who: 'narration', text: '她伸出小拇指，郑重其事地举到你面前。' },
+      {
+        who: 'choice',
+        text: '她的小指停在半空，眼神亮亮的，认真又紧张。',
+        options: [
+          { text: '我答应你，无论以后怎样都牵着你的手', reply: '（用力点头，小指紧紧勾住你）盖章！一百年都不许变！这是我们的约定哦。', emotion: 'blush', affection: 5 },
+          { text: '傻瓜，这种事还用说吗', reply: '（笑着轻轻锤你肩膀）就你嘴硬！……不过，我信你。这辈子赖上你啦。', emotion: 'happy', affection: 3 },
+        ],
+      },
+      { who: 'narration', text: '这个约定没有华丽的誓言，却被你们小心地收进了心里最暖的地方。' },
+    ],
+  },
+];
+
+export const STORY_IDS = STORIES.map((s) => s.id);
+
+export function getStoryById(id) {
+  return STORIES.find((s) => s.id === id) || null;
+}

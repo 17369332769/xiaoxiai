@@ -5,6 +5,7 @@ import {
   TIPPING_TIERS,
   THEMES,
   DEFAULT_THEME_ID,
+  STORIES,
 } from '../../shared/gameConfig.js';
 import { useGameActions } from './useGameActions.js';
 import { useRelationshipMemory } from './useRelationshipMemory.js';
@@ -66,6 +67,8 @@ export function useGameStore() {
   // Cosmetic theme state (which themes the user owns + the equipped one).
   const [ownedThemes, setOwnedThemes] = useState([DEFAULT_THEME_ID]);
   const [equippedTheme, setEquippedTheme] = useState(DEFAULT_THEME_ID);
+  // Story state: which 剧情 episodes the user has finished reading.
+  const [readStories, setReadStories] = useState([]);
   // Which AI message is currently being voiced (TTS), so its 🔊 button can show
   // a playing state. null when nothing is speaking.
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
@@ -190,6 +193,9 @@ export function useGameStore() {
         if (data.themes) {
           setOwnedThemes(Array.isArray(data.themes.owned) ? data.themes.owned : [DEFAULT_THEME_ID]);
           setEquippedTheme(data.themes.equipped || DEFAULT_THEME_ID);
+        }
+        if (data.stories) {
+          setReadStories(Array.isArray(data.stories.read) ? data.stories.read : []);
         }
         applyRelationshipProfile(data.relationship);
         resetFailureState();
@@ -653,6 +659,45 @@ export function useGameStore() {
     }
   }, [userId, notify, isMounted]);
 
+  // ---- Story episodes (剧情) ----
+  const loadStories = useCallback(async () => {
+    if (!userId) return false;
+    try {
+      const data = await postJson('/api/stories', { userId });
+      if (!isMounted()) return false;
+      setReadStories((prev) => (Array.isArray(data.read) ? data.read : prev));
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to load stories', { error: err });
+      return false;
+    }
+  }, [userId, isMounted]);
+
+  // Mark an episode read (on finishing it), passing the player's choices. The backend
+  // grants the one-time reward (coins + the affection earned from those choices) only
+  // on the first completion; we apply the returned user snapshot (coins/affection/
+  // level), append any level-up messages, refresh read state, and return the result
+  // so the modal can announce the reward. Errors are notified.
+  const claimStory = useCallback(async (storyId, choices) => {
+    if (!userId || !storyId) return null;
+    try {
+      const data = await postJson('/api/stories/claim', { userId, storyId, choices });
+      if (!isMounted()) return null;
+      if (data.user) applyUserSnapshot(data.user, userStateSetters);
+      if (Array.isArray(data.systemMessages) && data.systemMessages.length) {
+        setChatHistory((prev) => [...prev, ...data.systemMessages]);
+      }
+      setReadStories((prev) => (Array.isArray(data.read) ? data.read : prev));
+      return data;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return null;
+      logger.error('Failed to claim story', { error: err });
+      notify(err.message, 'error', '剧情读取失败');
+      return null;
+    }
+  }, [userId, notify, isMounted, userStateSetters]);
+
   // Apply the equipped theme's palette to the document root whenever it changes.
   // Every theme defines the same CSS-variable keys, so equipping any theme
   // (including the default) fully overrides the previously applied one.
@@ -697,6 +742,7 @@ export function useGameStore() {
     GIFT_ITEMS,
     TIPPING_TIERS,
     THEMES,
+    STORIES,
     sendMessage,
     feedXiaoxi,
     giftXiaoxi,
@@ -739,6 +785,9 @@ export function useGameStore() {
     loadThemes,
     unlockTheme,
     equipTheme,
+    readStories,
+    loadStories,
+    claimStory,
     playVoice,
     speakingMessageId,
     track,
