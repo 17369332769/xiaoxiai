@@ -74,6 +74,15 @@
         <h2>📊 最近行为事件</h2>
         <div class="scroll"><table id="eventsTbl"></table></div>
       </div>
+
+      <div class="panel">
+        <h2>⚙️ 运营配置（改价 / 打赏档 / 任务奖励，保存后下次购买或同步即生效）</h2>
+        <div id="configBox" class="scroll"></div>
+        <div class="row" style="margin-top:12px;">
+          <button onclick="saveConfig()">保存配置</button>
+          <span id="configMsg" style="color:var(--muted);font-size:13px;"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -150,8 +159,48 @@
         document.getElementById('eventsTbl').innerHTML =
           '<tr><th>时间</th><th>用户</th><th>类型</th><th>详情</th></tr>' +
           events.map((e) => `<tr><td>${esc(e.timestamp)}</td><td>${esc(e.user_id)}</td><td>${esc(e.type)}</td><td>${esc(e.payload)}</td></tr>`).join('');
+
+        const { config } = await api('/api/admin/config');
+        renderConfig(config);
       } catch (e) {
         if (e.code === 'ADMIN_FORBIDDEN') logout();
+      }
+    }
+
+    // ---- Runtime config editor (商品价 / 打赏档 / 任务奖励) ----
+    function configRow(label, key, value) {
+      return `<tr><td>${esc(label)}</td><td><input type="number" min="1" step="1" data-key="${esc(key)}" data-orig="${esc(value)}" value="${esc(value)}" style="width:120px;" /></td></tr>`;
+    }
+    function renderConfig(cfg) {
+      const section = (title, rows) => rows
+        ? `<div style="margin-bottom:14px;"><div style="color:var(--muted);font-size:12px;margin-bottom:6px;">${title}</div><table>${rows}</table></div>`
+        : '';
+      const food = (cfg.food || []).map((i) => configRow(`${i.icon || ''} ${i.name}`, `food:${i.id}:cost`, i.cost)).join('');
+      const gifts = (cfg.gifts || []).map((i) => configRow(`${i.icon || ''} ${i.name}`, `gift:${i.id}:cost`, i.cost)).join('');
+      const tips = (cfg.tippingTiers || []).map((t) => configRow(`打赏 ¥${t.amount}`, `tippingTier:${t.amount}:coins`, t.coins)).join('');
+      const tasks = [...(cfg.dailyTasks || []), ...(cfg.growthTasks || [])].map((t) => configRow(t.name, `task:${t.id}:reward`, t.reward)).join('');
+      document.getElementById('configBox').innerHTML =
+        section('喂食成本（爱心币）', food) +
+        section('礼物成本（爱心币）', gifts) +
+        section('打赏档位 · 发放爱心币', tips) +
+        section('任务奖励（爱心币）', tasks);
+    }
+    async function saveConfig() {
+      const msg = document.getElementById('configMsg');
+      const overrides = {};
+      document.querySelectorAll('#configBox input[data-key]').forEach((el) => {
+        const v = Number(el.value);
+        if (Number.isInteger(v) && v > 0 && String(v) !== String(el.dataset.orig)) {
+          overrides[el.dataset.key] = v;
+        }
+      });
+      if (Object.keys(overrides).length === 0) { msg.textContent = '没有需要保存的修改。'; return; }
+      try {
+        const { applied } = await api('/api/admin/config', { overrides });
+        msg.textContent = `已保存 ${Object.keys(applied || {}).length} 项，下次购买/同步即生效。`;
+        refreshAll();
+      } catch (e) {
+        msg.textContent = '保存失败：' + e.message;
       }
     }
 

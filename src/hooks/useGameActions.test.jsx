@@ -516,11 +516,55 @@ describe('useGameActions', () => {
     expect(result.current.chatHistory.some((msg) => msg.sender === 'system' && msg.text.includes('失败'))).toBe(true);
   });
 
-  test('treats a stream that ends without a done frame as a failed send', async () => {
+  test('a truncated stream falls back to /api/chat and still delivers a reply', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       if (input === '/api/chat/stream') {
         // Only a delta frame — the connection ends with no authoritative `done`.
         return mockRawSseResponse([sseFrame('delta', { text: '半句话…' })]);
+      }
+      if (input === '/api/chat') {
+        // Non-streaming fallback returns a complete reply (same shape as `done`).
+        return mockJsonResponse({
+          ok: true,
+          aiMessage: {
+            id: 'ai-fallback-1',
+            sender: 'ai',
+            text: '小希这次用兜底通道回复啦~',
+            avatarState: 'happy',
+            timestamp: '10:20',
+          },
+          user: { level: 1, affection: 12, energy: 78, mood: 72, coins: 200 },
+          tasks: [],
+          systemMessages: [],
+        });
+      }
+      throw new Error(`Unexpected fetch to ${String(input)}`);
+    });
+
+    const notify = vi.fn();
+    const { result } = renderHook(() => useGameActionsHarness({ notify }));
+
+    await act(async () => {
+      const success = await result.current.sendMessage('继续呀');
+      expect(success).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatHistory.some((msg) => msg.id === 'ai-fallback-1')).toBe(true);
+    });
+    expect(result.current.chatHistory.some((msg) => msg.text === '小希这次用兜底通道回复啦~')).toBe(true);
+    expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
+    expect(result.current.lastFailedMessage).toBe('');
+  });
+
+  test('a truncated stream whose /api/chat fallback also fails surfaces a failed send', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (input === '/api/chat/stream') {
+        return mockRawSseResponse([sseFrame('delta', { text: '半句话…' })]);
+      }
+      if (input === '/api/chat') {
+        return Promise.reject(new Error('兜底通道也连不上'));
       }
       throw new Error(`Unexpected fetch to ${String(input)}`);
     });
@@ -533,8 +577,9 @@ describe('useGameActions', () => {
       expect(success).toBe(false);
     });
 
-    expect(notify).toHaveBeenCalledWith('回复没有收完，请稍后再试。', 'error', '发送失败');
+    expect(notify).toHaveBeenCalledWith('兜底通道也连不上', 'error', '发送失败');
     expect(result.current.lastFailedMessage).toBe('继续呀');
     expect(result.current.chatHistory.some((msg) => msg.streaming)).toBe(false);
+    expect(result.current.chatHistory.some((msg) => msg.sender === 'system' && msg.text.includes('失败'))).toBe(true);
   });
 });

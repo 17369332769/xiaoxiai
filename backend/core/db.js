@@ -331,6 +331,21 @@ async function initializeTables() {
       )
     `);
 
+    // 13. Idempotency Keys (dedup client-supplied request ids for state-mutating
+    // actions: feed / gift / tip). A row's presence means "this exact action was
+    // already applied"; a duplicate/retried request claims the same key, sees
+    // changes === 0, and short-circuits instead of re-debiting coins / re-adding
+    // affection. SQLite serializes writes, so a concurrent duplicate reliably
+    // loses the INSERT OR IGNORE race.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS idempotency_keys (
+        key TEXT PRIMARY KEY,
+        user_id TEXT,
+        action TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     await runColumnMigrations();
 
     const relationshipEventColumns = [

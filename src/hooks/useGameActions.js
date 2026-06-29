@@ -144,6 +144,11 @@ export function useGameActions({
 
     let streamedText = '';
     let finalized = false;
+    // Set only when the stream resolved/ended WITHOUT a complete `done` frame (a
+    // truncated connection). Gates the non-streaming /api/chat fallback below: a
+    // pre-stream connection reject or an authoritative `error` frame leaves this
+    // false, so those still surface as failures rather than silently retrying.
+    let streamTruncated = false;
 
     try {
       await postSse('/api/chat/stream', { userId, text }, {
@@ -168,7 +173,8 @@ export function useGameActions({
             const aiMessage = payload.aiMessage;
             if (!aiMessage) {
               // A malformed/truncated `done` frame parses to `{}` upstream — bail
-              // before mutating history so the catch cleans up both temps.
+              // before mutating history so the catch can fall back / clean up.
+              streamTruncated = true;
               throw new Error('回复没有收完，请稍后再试。');
             }
             // Mark finalized before the post-commit side effects so a later
@@ -206,8 +212,9 @@ export function useGameActions({
       }
 
       if (!finalized) {
-        // Stream ended without a `done` frame (truncated connection) — surface
-        // it as a failure so the user can retry rather than seeing a half reply.
+        // Stream ended without a `done` frame (truncated connection) — fall back
+        // to the non-streaming /api/chat below rather than failing outright.
+        streamTruncated = true;
         throw new Error('回复没有收完，请稍后再试。');
       }
 
@@ -224,8 +231,52 @@ export function useGameActions({
         return true;
       }
 
-      logger.error('Chat stream failed', { error: err });
-      notify(err.message, 'error', '发送失败');
+      let failure = err;
+      if (streamTruncated) {
+        // The stream dropped mid-reply without a complete `done` frame. Fall back
+        // once to the non-streaming /api/chat so the user still gets a reply. The
+        // response carries the same shape as the `done` payload, so commit it the
+        // same way (drop the streaming placeholder, promote the user temp message).
+        try {
+          const data = await postJson('/api/chat', { userId, text }, { signal: controller.signal });
+          if (controller.signal.aborted || !isMounted()) {
+            return false;
+          }
+          if (!data.aiMessage) {
+            throw new Error('回复没有收完，请稍后再试。', { cause: err });
+          }
+          const fallbackAiMessage = { ...data.aiMessage, streamed: true };
+          setChatHistory((prev) => {
+            const next = prev
+              .filter((msg) => msg.id !== tempAiId)
+              .map((msg) => (msg.id === tempUserId ? { ...msg, id: `user-${suffix}` } : msg));
+            next.push(fallbackAiMessage);
+            if (data.systemMessages?.length) {
+              next.push(...data.systemMessages);
+            }
+            return next;
+          });
+          applyUserSnapshot(data.user, userStateSetters);
+          setTasks(data.tasks);
+          if (data.relationship) {
+            applyRelationshipProfile(data.relationship, { announce: true });
+          }
+          resetFailureState();
+          setAvatarState(data.aiMessage.avatarState);
+          return true;
+        } catch (fallbackErr) {
+          if (controller.signal.aborted || isAbortError(fallbackErr) || !isMounted()) {
+            return false;
+          }
+          // Both transports failed — fall through to the shared failure handling
+          // using the fallback's error message.
+          logger.error('Chat /api/chat fallback failed', { error: fallbackErr });
+          failure = fallbackErr;
+        }
+      }
+
+      logger.error('Chat stream failed', { error: failure });
+      notify(failure.message, 'error', '发送失败');
       setStateIfMounted(setLastFailedMessage, text);
       setChatHistory((prev) => [
         ...prev.filter((msg) => msg.id !== tempUserId && msg.id !== tempAiId),
@@ -281,9 +332,19 @@ export function useGameActions({
     const controller = createTrackedRequestController();
 
     try {
-      const data = await postJson('/api/action/feed', { userId, foodId }, { signal: controller.signal });
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const data = await postJson('/api/action/feed', { userId, foodId, requestId }, { signal: controller.signal });
       if (controller.signal.aborted || !isMounted()) {
         return false;
+      }
+
+      if (data.duplicate) {
+        // A transport-level retry of this exact request was deduped server-side;
+        // apply the authoritative state without re-appending messages.
+        if (data.user) applyUserSnapshot(data.user, userStateSetters);
+        if (data.tasks) setTasks(data.tasks);
+        resetFailureState();
+        return true;
       }
 
       setChatHistory((prev) => appendServerMessages(prev, [data.sysMsg, data.aiMsg], data.systemMessages));
@@ -346,9 +407,18 @@ export function useGameActions({
     const controller = createTrackedRequestController();
 
     try {
-      const data = await postJson('/api/action/gift', { userId, giftId }, { signal: controller.signal });
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const data = await postJson('/api/action/gift', { userId, giftId, requestId }, { signal: controller.signal });
       if (controller.signal.aborted || !isMounted()) {
         return false;
+      }
+
+      if (data.duplicate) {
+        // Deduped retry: apply authoritative state, skip messages + celebration.
+        if (data.user) applyUserSnapshot(data.user, userStateSetters);
+        if (data.tasks) setTasks(data.tasks);
+        resetFailureState();
+        return true;
       }
 
       setChatHistory((prev) => appendServerMessages(prev, [data.sysMsg, data.aiMsg], data.systemMessages));
@@ -531,13 +601,23 @@ export function useGameActions({
     const controller = createTrackedRequestController();
 
     try {
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const data = await postJson('/api/action/tip', {
         userId,
         amount,
         paymentMethod,
+        requestId,
       }, { signal: controller.signal });
       if (controller.signal.aborted || !isMounted()) {
         return false;
+      }
+
+      if (data.duplicate) {
+        // Deduped retry: apply authoritative state, skip messages + celebration.
+        if (data.user) applyUserSnapshot(data.user, userStateSetters);
+        if (data.tasks) setTasks(data.tasks);
+        resetFailureState();
+        return true;
       }
 
       setChatHistory((prev) => {

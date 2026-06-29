@@ -32,6 +32,7 @@ import { recordDailyActive, recordEvent, recordFirstTime } from '../services/ana
 import { pushBroadcast } from '../services/broadcasts.js';
 import { createOrder, settleOrder } from '../services/orders.js';
 import { findAccountByUserId } from '../services/accounts.js';
+import { claimIdempotencyKey } from '../services/idempotency.js';
 
 const LEVEL_BROADCAST_MILESTONES = new Set([5, 10, 20]);
 
@@ -44,6 +45,23 @@ function serializeUser(user, extra = {}) {
     coins: user.coins,
     ...extra,
   };
+}
+
+// Server-side idempotency for state-mutating actions (feed / gift / tip). When the
+// client supplies a per-action `requestId`, atomically claim it; a duplicate /
+// retried request loses the claim and is short-circuited with the current
+// authoritative state instead of re-debiting coins or re-adding affection. Returns
+// true when it has already responded (the caller must then `return`). No requestId
+// → returns false (legacy behavior preserved; never blocks distinct actions).
+async function handleDuplicateAction(req, res, userId, action) {
+  const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId.trim() : '';
+  if (!requestId) return false;
+  const fresh = await claimIdempotencyKey(userId, action, requestId);
+  if (fresh) return false;
+  const current = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
+  const tasks = await loadFormattedTasks(userId);
+  sendJson(res, { duplicate: true, user: current ? serializeUser(current) : null, tasks });
+  return true;
 }
 
 // Centralized side effects when affection causes one or more level-ups.
@@ -645,12 +663,15 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     let isNewUser = false;
 
     if (!user) {
-      isNewUser = true;
-      await dbRun(
-        'INSERT INTO users (id, level, affection, energy, mood, coins, last_checkin) VALUES (?, 1, 10, 80, 70, 200, NULL)',
+      // INSERT OR IGNORE so two concurrent first syncs (StrictMode's double effect)
+      // can't collide on the primary key — the loser's insert is a no-op. Only the
+      // row's actual creator (changes === 1) is "new", so the register event and the
+      // new-user-only branches below fire exactly once.
+      const created = await dbRun(
+        'INSERT OR IGNORE INTO users (id, level, affection, energy, mood, coins, last_checkin) VALUES (?, 1, 10, 80, 70, 200, NULL)',
         [userId]
       );
-
+      isNewUser = created.changes === 1;
       user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     }
 
@@ -682,11 +703,25 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     await pruneUserChat(userId).catch((error) => logger.warn('Chat history prune failed', { userId, error: error.message }));
 
     // Proactive recall: a returning user (not brand-new) who has been away long
-    // enough gets a warm "missed you" greeting prepended to their history. Then
-    // stamp last_seen so the same return can't re-trigger it.
+    // enough gets a warm "missed you" greeting prepended to their history.
+    //
+    // The greeting insert and the last_seen stamp are fused into one atomic
+    // compare-and-set: only the request that advances last_seen away from the
+    // exact value it read gets to insert the greeting. A duplicated / concurrent
+    // sync — e.g. React StrictMode double-invoking the mount effect, which fires
+    // two /api/user/sync requests that both read the same old last_seen — would
+    // otherwise insert the greeting twice. The loser sees changes === 0 and skips.
     const nowMs = Date.now();
     const lastSeenMs = Number.isFinite(user.last_seen) ? user.last_seen : null;
+    let claimedRecall = false;
     if (!isNewUser && lastSeenMs !== null) {
+      const claim = await dbRun(
+        'UPDATE users SET last_seen = ? WHERE id = ? AND last_seen = ?',
+        [nowMs, userId, lastSeenMs]
+      );
+      claimedRecall = claim.changes === 1;
+    }
+    if (claimedRecall) {
       const recall = getRecallGreeting(nowMs - lastSeenMs);
       if (recall) {
         const recallId = generateId('ai-recall');
@@ -696,8 +731,11 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
         );
         await recordEvent(userId, 'recall_greeting', {});
       }
+    } else {
+      // Brand-new user (null last_seen) or a concurrent duplicate that lost the
+      // claim above: still stamp last_seen so the next visit is measured from now.
+      await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [nowMs, userId]);
     }
-    await dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [nowMs, userId]);
 
     const chatHistory = await dbAll(
       'SELECT id, sender, text, avatar_state as avatarState, strftime("%H:%M", created_at, "localtime") as timestamp FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 40',
@@ -709,11 +747,27 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
       const persona = buildPersonaContext(user);
       const welcomeId = generateId('welcome');
       const welcomeText = `你好呀，${persona.address}！我是你的AI女友小希。${persona.timeGreeting.text} 你可以和我聊天、喂我吃好吃的，或者送我礼物哦~ 让我们一起度过美好的一天吧！(点点头)`;
-      await dbRun(
-        'INSERT INTO chat_messages (id, user_id, sender, text, avatar_state) VALUES (?, ?, "ai", ?, "normal")',
-        [welcomeId, userId, welcomeText]
+      // Seed the welcome only if the user still has no messages, so two concurrent
+      // first syncs can't both insert one. SQLite serializes writes, so the loser's
+      // NOT EXISTS guard sees the winner's row and inserts nothing (changes === 0).
+      const seeded = await dbRun(
+        `INSERT INTO chat_messages (id, user_id, sender, text, avatar_state)
+           SELECT ?, ?, 'ai', ?, 'normal'
+           WHERE NOT EXISTS (SELECT 1 FROM chat_messages WHERE user_id = ?)`,
+        [welcomeId, userId, welcomeText, userId]
       );
-      chatHistory.push(createChatMessage(welcomeId, 'ai', welcomeText, { avatarState: 'normal' }));
+      if (seeded.changes === 1) {
+        chatHistory.push(createChatMessage(welcomeId, 'ai', welcomeText, { avatarState: 'normal' }));
+      } else {
+        // A concurrent sync already seeded the welcome; load the real row(s) so
+        // this response still returns the first message instead of empty history.
+        const seededRows = await dbAll(
+          'SELECT id, sender, text, avatar_state as avatarState, strftime("%H:%M", created_at, "localtime") as timestamp FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 40',
+          [userId]
+        );
+        seededRows.reverse();
+        chatHistory.push(...seededRows);
+      }
     }
 
     const formattedTasks = await loadFormattedTasks(userId);
@@ -941,6 +995,8 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
 
+    if (await handleDuplicateAction(req, res, userId, 'feed')) return;
+
     if (user.coins < food.cost) {
       throw new AppError(400, 'INSUFFICIENT_COINS', 'Coins insufficient');
     }
@@ -1007,6 +1063,8 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+
+    if (await handleDuplicateAction(req, res, userId, 'gift')) return;
 
     if (user.coins < gift.cost) {
       throw new AppError(400, 'INSUFFICIENT_COINS', 'Coins insufficient');
@@ -1092,6 +1150,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
     const user = await dbGet('SELECT * FROM users WHERE id = ?', [userId]);
     if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+    if (await handleDuplicateAction(req, res, userId, 'tip')) return;
     if (presence) presence.touch(userId);
 
     // Quick simulated-instant-pay path: create a real order and settle it

@@ -361,3 +361,41 @@
 - **验证**：`npm run verify` 全绿——前端 **87** + 后端 **196** + build，EXIT 0。
 
 **git**：提交 `3ce07c7`（含本轮剧情系统 + 上一轮 linkify 改动）并推送到 `origin/main`。
+
+## 第25轮（并发幂等修复 + 未完成功能审计）
+
+> 2026-06-29。用户报「主动回复重复两条」并要求盘点未完成功能。
+
+### 25.1 `/api/user/sync` 重复消息修复（已完成）
+
+**根因**：`main.jsx` 的 React **StrictMode** 在 dev 下双触发 `useGameStore.js` 的挂载 sync effect → 两个并发 `/api/user/sync`（前端 `controller.abort()` 第一个，但请求多已到后端执行了 DB 写入）。该接口三处「先读后写」非原子，并发各写一遍。
+
+**修复**（`apiRoutes.js` `/api/user/sync`，均靠 sqlite 写串行 + `this.changes`）：
+- 建档：`INSERT OR IGNORE` + `isNewUser = changes===1`（原为并发主键冲突 500 + 双 `register` 事件）。
+- 召回问候：融成原子 CAS `UPDATE users SET last_seen=now WHERE id=? AND last_seen=旧值`，仅 `changes===1` 的请求插问候。
+- 欢迎语：`INSERT ... SELECT ... WHERE NOT EXISTS(该用户已有消息)`，输者回读。
+- `recall.test.js` 新增 3 个并发回归测试（已证明修复前全红）。对抗式审查（只读 Explore）判定三处修复 correct。
+
+### 25.2 Action 端点服务端幂等（feed/gift/tip，本轮执行）
+
+**背景**：审查发现 `/api/chat(/stream)`、feed、gift、tip 在「真并发重复请求」下会重复扣币/加好感（前端有 in-flight 锁、非 StrictMode 触发，故现实风险低，但金币路径值得加防）。
+
+**方案**：客户端按动作生成 `requestId` 随 body 上送；服务端 `idempotency_keys` 表 + `claimIdempotencyKey()` 做 `INSERT OR IGNORE` 原子认领，重复请求 `changes===0` → 短路返回当前权威 `user`/`tasks`（`duplicate:true`），不再重复发副作用。向后兼容：未带 `requestId` 时维持原行为（不破坏既有测试/客户端）。
+
+### 25.3 未完成功能审计（22 项，已逐项回代码核实）
+
+> 多 agent workflow：3 收集（读需求文档/台账/README+扫码）→ 合并去重 → 逐项对照代码验证。核心闭环 14 项核实完成；下列为未完成，按「卡点」分层。
+
+**Tier A — 纯工程可做（不依赖外部）**：① action 端点幂等（→25.2 本轮做）；② SSE 流式失败回退 `/api/chat`（`useGameActions.js:124` 注释承诺但未实现）；③ Admin `/api/admin/config` 管理 UI（后端就绪，`admin.html` 未接）；④ 前端请求超时包装 / 429 Retry-After / 自动退避重试 / 离线检测；⑤ Sentry/错误上报；⑥ 资产·订单历史 UI（背包/订单列表/`/api/orders`）。
+
+**Tier B — 需外部资源/凭证**：真实微信/支付宝商户接入（现模拟网关、流程真实）；短信/邮件 OTP 真实下发（`verification.js#sendVerificationCode` 仍是日志桩）；小希自有音色（克隆脚本就绪，需录样本+执行）；多实例分布式限流（需 Redis）。
+
+**Tier C — 需产品/法务决策**：内容安全升级（模型审核+实名+青少年模式，国内合规阻断项）；隐私政策/ToS 法务定稿（模板已就位）；订阅/充值会员/首充礼包；玩法深化（小游戏、纪念日；剧情已完成）；限时活动广播主题；i18n（730+ 中文硬编码）；退款用户自助入口（现仅 admin）；DB git 历史清理 A9（需 force-push）；聊天端点事务安全 A4（sqlite 架构约束，暂缓）。
+
+### 25.4 本轮已落地的 Tier A（3 项）
+
+- **Action 端点幂等**（25.2）✅
+- **Admin 配置管理 UI** ✅：`public/admin.html` 新增「⚙️ 运营配置」面板，拉 `/api/admin/config` 渲染喂食价/礼物价/打赏档发币/任务奖励可编辑表单，保存只提交改动项。临时实例实测端点形状与 override 键对齐。
+- **SSE 流式失败回退** ✅：`useGameActions.js#sendMessage` 在**流被截断（无 done 帧）**时回退到非流式 `/api/chat` 交付回复；**仅限传输层截断**（`streamTruncated` 闸门）——预连接失败 / 服务端 `error` 帧 / 内容拦截仍判失败。改写截断测试为「截断→回退成功」+ 新增「回退也失败→报错」两例；error 帧那条测试不受影响。`npm run verify` 全绿（前端 **88** / 后端 **203**）。
+
+**剩余 Tier A（未做，待排期）**：前端请求超时包装 / 429 Retry-After / 自动退避重试 / 离线检测；Sentry/错误上报；资产·订单历史 UI。

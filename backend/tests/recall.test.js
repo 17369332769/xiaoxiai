@@ -80,3 +80,56 @@ test('a 3+ day absence reports the day count', async () => {
     'the 3+ day tier mentions how many days it has been'
   );
 });
+
+// Regression: React StrictMode double-invokes the mount effect in dev, firing two
+// concurrent /api/user/sync requests that both read the same old state. The recall
+// greeting, the welcome seed, and the new-user row insert must each happen once.
+test('concurrent duplicate syncs insert the recall greeting only once', async () => {
+  const uid = 'recall_concurrent';
+  await req('POST', '/api/user/sync', { userId: uid });
+  await dbModule.dbRun('UPDATE users SET last_seen = ? WHERE id = ?', [Date.now() - 2 * 24 * 60 * 60 * 1000, uid]);
+  // Two syncs race before either stamps last_seen — the pre-fix bug inserted two.
+  const [a, b] = await Promise.all([
+    req('POST', '/api/user/sync', { userId: uid }),
+    req('POST', '/api/user/sync', { userId: uid }),
+  ]);
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  const rows = await dbModule.dbAll(
+    "SELECT id FROM chat_messages WHERE user_id = ? AND text LIKE '%好久不见%'",
+    [uid]
+  );
+  assert.equal(rows.length, 1, 'exactly one recall greeting despite the concurrent duplicate sync');
+});
+
+test('concurrent syncs with empty history seed the welcome only once', async () => {
+  const uid = 'welcome_concurrent';
+  await req('POST', '/api/user/sync', { userId: uid }); // creates the user + seeds the welcome
+  await dbModule.dbRun('DELETE FROM chat_messages WHERE user_id = ?', [uid]); // back to empty history
+  const [a, b] = await Promise.all([
+    req('POST', '/api/user/sync', { userId: uid }),
+    req('POST', '/api/user/sync', { userId: uid }),
+  ]);
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  // Both responses must still surface the welcome (one inserts it, the other reloads it).
+  assert.ok(a.body.chatHistory.length >= 1 && b.body.chatHistory.length >= 1);
+  const rows = await dbModule.dbAll('SELECT id FROM chat_messages WHERE user_id = ?', [uid]);
+  assert.equal(rows.length, 1, 'exactly one welcome despite the concurrent empty-history sync');
+});
+
+test('concurrent first syncs for a brand-new user create one row without erroring', async () => {
+  const uid = 'firstsync_concurrent';
+  const [a, b] = await Promise.all([
+    req('POST', '/api/user/sync', { userId: uid }),
+    req('POST', '/api/user/sync', { userId: uid }),
+  ]);
+  // Neither request 500s on a primary-key collision.
+  assert.equal(a.status, 200, 'first concurrent sync succeeds');
+  assert.equal(b.status, 200, 'second concurrent sync succeeds (INSERT OR IGNORE, no PK clash)');
+  const users = await dbModule.dbAll('SELECT id FROM users WHERE id = ?', [uid]);
+  assert.equal(users.length, 1);
+  // register is recorded exactly once (only the actual row creator counts as new).
+  const regs = await dbModule.dbAll("SELECT id FROM events WHERE user_id = ? AND type = 'register'", [uid]);
+  assert.equal(regs.length, 1, 'register event fires exactly once');
+});
