@@ -13,9 +13,11 @@ import StoryModal from './components/StoryModal';
 import CelebrateEffect from './components/CelebrateEffect';
 import NotificationCenter from './components/NotificationCenter';
 import SyncStatusBanner from './components/SyncStatusBanner';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 function App() {
   const store = useGameStore();
+  const isOnline = useOnlineStatus();
 
   // Modal control states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,6 +46,7 @@ function App() {
   const openWallet = () => {
     setIsWalletOpen(true);
     store.loadTransactions();
+    store.loadOrders();
     store.track('open_wallet');
   };
 
@@ -97,6 +100,22 @@ function App() {
 
   return (
     <div className="app-container">
+      {!isOnline && (
+        <div
+          className="offline-banner"
+          role="alert"
+          style={{
+            background: '#b00020',
+            color: '#fff',
+            textAlign: 'center',
+            padding: '8px 12px',
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          📡 网络已断开，部分功能暂不可用，请检查你的网络连接。
+        </div>
+      )}
       {/* Fullscreen Celebration Canvas (Roses/Hearts/Stars Shower) */}
       <CelebrateEffect active={store.showCelebration} type={store.celebrationType} />
       <NotificationCenter
@@ -224,6 +243,9 @@ function App() {
         transactions={store.transactions}
         isLoadingTransactions={store.isLoadingTransactions}
         loadTransactions={store.loadTransactions}
+        orders={store.orders}
+        isLoadingOrders={store.isLoadingOrders}
+        loadOrders={store.loadOrders}
       />
 
       {/* Account Center Dialog */}

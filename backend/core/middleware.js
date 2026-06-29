@@ -38,7 +38,9 @@ export function createRateLimitMiddleware(windowMs, maxRequests) {
     }
 
     if (bucket.count >= maxRequests) {
-      next(new AppError(429, 'RATE_LIMITED', 'Too many requests, please try again later.'));
+      next(new AppError(429, 'RATE_LIMITED', 'Too many requests, please try again later.', {
+        retryAfterMs: Math.max(0, bucket.resetAt - now),
+      }));
       return;
     }
 
@@ -83,6 +85,13 @@ export function createErrorHandler(logger) {
       }
     } else if (status >= 500) {
       logger.error('Unhandled server error', { error });
+    }
+
+    // Standard Retry-After (seconds) for throttle responses so clients (and well-
+    // behaved proxies) know how long to back off; the same hint also rides in
+    // details.retryAfterMs for the SPA.
+    if (status === 429 && details && Number.isFinite(details.retryAfterMs)) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil(details.retryAfterMs / 1000))));
     }
 
     res.status(status).json({

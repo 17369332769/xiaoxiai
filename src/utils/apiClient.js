@@ -11,10 +11,59 @@ export async function parseApiResponse(response) {
     const error = new Error(message);
     error.code = code;
     error.status = response.status;
+    error.details = data?.error?.details || null;
+    if (error.details && Number.isFinite(error.details.retryAfterMs)) {
+      error.retryAfterMs = error.details.retryAfterMs;
+    }
     throw error;
   }
 
   return data;
+}
+
+// Default per-request timeout. A hung connection aborts and surfaces a real
+// TIMEOUT error instead of spinning forever.
+export const DEFAULT_TIMEOUT_MS = 20000;
+
+// Bind the fetch to an abort signal that fires when EITHER the caller's signal
+// aborts or our own timeout elapses. `isTimeout()` distinguishes the two so a
+// timeout becomes a surfaced error while a caller abort stays a silent cancel.
+function createTimeoutSignal(externalSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  const timer = timeoutMs > 0
+    ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs)
+    : null;
+  return {
+    signal: controller.signal,
+    isTimeout: () => timedOut,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+    },
+  };
+}
+
+// Only transient failures are safe to retry: our own timeout, a network-layer
+// fetch rejection (TypeError), or a transient upstream 5xx. A 4xx / business
+// error is deterministic and must not be retried.
+function isRetryableError(error) {
+  if (error?.code === 'TIMEOUT') return true;
+  if (error?.name === 'TypeError') return true;
+  const status = error?.status;
+  return status === 502 || status === 503 || status === 504;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Exponential backoff: 300ms, 900ms, 2700ms (capped). No jitter, for test determinism.
+function retryDelayMs(attempt) {
+  return Math.min(300 * (3 ** (attempt - 1)), 3000);
 }
 
 function buildAuthHeaders() {
@@ -35,15 +84,43 @@ function buildAuthHeaders() {
   return headers;
 }
 
-export async function postJson(url, payload, { signal } = {}) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: buildAuthHeaders(),
-    signal,
-    body: JSON.stringify(payload),
-  });
-
-  return parseApiResponse(response);
+// POST a JSON payload. Adds a per-request timeout (default 20s) and, when
+// `retries > 0`, transparently retries transient failures (timeout / network /
+// 5xx) with exponential backoff. Retries are OPT-IN per call so only safe or
+// idempotent endpoints (reads, or writes carrying a server-side idempotency key)
+// enable them — a blind retry of a non-idempotent write could double-apply.
+export async function postJson(url, payload, { signal, timeoutMs = DEFAULT_TIMEOUT_MS, retries = 0 } = {}) {
+  let attempt = 0;
+  for (;;) {
+    const timeout = createTimeoutSignal(signal, timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: buildAuthHeaders(),
+        signal: timeout.signal,
+        body: JSON.stringify(payload),
+      });
+      return await parseApiResponse(response);
+    } catch (error) {
+      let surfaced = error;
+      if (timeout.isTimeout() && isAbortError(error)) {
+        // Our timeout fired — turn the silent AbortError into a real, shown error.
+        surfaced = new Error('请求超时了，请检查网络后重试。');
+        surfaced.code = 'TIMEOUT';
+      } else if (isAbortError(error)) {
+        // The caller aborted (navigation / userId switch) — propagate silently.
+        throw error;
+      }
+      if (attempt < retries && isRetryableError(surfaced)) {
+        attempt += 1;
+        await sleep(retryDelayMs(attempt));
+        continue;
+      }
+      throw surfaced;
+    } finally {
+      timeout.cleanup();
+    }
+  }
 }
 
 // Parse one raw SSE frame (lines between blank-line separators) into its

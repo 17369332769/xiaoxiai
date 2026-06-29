@@ -11,6 +11,16 @@ function getCategoryMeta(category) {
   return CATEGORY_META[category] || { icon: '💰', label: '其他' };
 }
 
+const ORDER_STATUS = {
+  created: { label: '待支付', color: 'var(--text-muted)' },
+  pending: { label: '支付中', color: '#f6c945' },
+  paid: { label: '已支付', color: '#4ade80' },
+  failed: { label: '支付失败', color: '#ff7597' },
+  refunded: { label: '已退款', color: 'var(--text-muted)' },
+};
+const PM_LABEL = { wechat: '微信支付', alipay: '支付宝' };
+const PM_ICON = { wechat: '💚', alipay: '💙' };
+
 export default function WalletModal({
   isOpen,
   onClose,
@@ -18,6 +28,9 @@ export default function WalletModal({
   transactions = [],
   isLoadingTransactions = false,
   loadTransactions,
+  orders = [],
+  isLoadingOrders = false,
+  loadOrders,
 }) {
   if (!isOpen) return null;
 
@@ -95,6 +108,61 @@ export default function WalletModal({
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                       余额 {txn.balance}
                     </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Recharge / order history */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '18px 0 10px' }}>
+          <div className="section-title" style={{ fontSize: '13px', margin: 0 }}>🧾 充值 / 订单记录</div>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={loadOrders}
+            disabled={isLoadingOrders}
+            style={{ padding: '4px 12px', fontSize: '12px' }}
+          >
+            {isLoadingOrders ? '刷新中...' : '刷新'}
+          </button>
+        </div>
+
+        <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {isLoadingOrders && orders.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '24px 0' }}>
+              正在加载订单...
+            </div>
+          ) : orders.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '24px 0' }}>
+              还没有充值订单，去给小希充值/打赏后就会出现在这里~
+            </div>
+          ) : (
+            orders.map((order) => {
+              const st = ORDER_STATUS[order.status] || { label: order.status, color: 'var(--text-muted)' };
+
+              return (
+                <div
+                  key={order.id}
+                  className="task-item"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexGrow: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: '20px' }}>{PM_ICON[order.paymentMethod] || '💳'}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="task-name" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        充值 ¥{order.amount} · {order.coins} 爱心币
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {PM_LABEL[order.paymentMethod] || order.paymentMethod} · {order.createdAt || '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '13px', color: st.color }}>{st.label}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>¥{order.amount}</div>
                   </div>
                 </div>
               );

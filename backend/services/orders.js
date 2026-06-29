@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { dbGet, dbRun } from '../core/db.js';
+import { dbAll, dbGet, dbRun } from '../core/db.js';
 import { AppError } from '../core/appError.js';
 import { creditCoins, recordTransaction, refundCoins } from './gameplay.js';
 import { createLogger } from '../core/logger.js';
@@ -151,4 +151,27 @@ export function serializeOrder(order) {
     paymentMethod: order.payment_method,
     status: order.status,
   };
+}
+
+// The user's own recharge/order history, newest first. Backs the wallet's order
+// records view. Scoped to userId by the caller; timestamps are pre-formatted for
+// display (local time).
+export async function listOrders(userId, limit = 50) {
+  const rows = await dbAll(
+    `SELECT id, out_trade_no, tier_amount, coins, payment_method, status,
+            strftime('%Y-%m-%d %H:%M', created_at, 'localtime') AS created_at,
+            strftime('%Y-%m-%d %H:%M', paid_at, 'localtime') AS paid_at
+       FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+    [userId, limit]
+  );
+  return rows.map((o) => ({
+    id: o.id,
+    outTradeNo: o.out_trade_no,
+    amount: o.tier_amount,
+    coins: o.coins,
+    paymentMethod: o.payment_method,
+    status: o.status,
+    createdAt: o.created_at,
+    paidAt: o.paid_at,
+  }));
 }

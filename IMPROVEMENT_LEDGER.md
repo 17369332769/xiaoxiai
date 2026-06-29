@@ -398,4 +398,21 @@
 - **Admin 配置管理 UI** ✅：`public/admin.html` 新增「⚙️ 运营配置」面板，拉 `/api/admin/config` 渲染喂食价/礼物价/打赏档发币/任务奖励可编辑表单，保存只提交改动项。临时实例实测端点形状与 override 键对齐。
 - **SSE 流式失败回退** ✅：`useGameActions.js#sendMessage` 在**流被截断（无 done 帧）**时回退到非流式 `/api/chat` 交付回复；**仅限传输层截断**（`streamTruncated` 闸门）——预连接失败 / 服务端 `error` 帧 / 内容拦截仍判失败。改写截断测试为「截断→回退成功」+ 新增「回退也失败→报错」两例；error 帧那条测试不受影响。`npm run verify` 全绿（前端 **88** / 后端 **203**）。
 
-**剩余 Tier A（未做，待排期）**：前端请求超时包装 / 429 Retry-After / 自动退避重试 / 离线检测；Sentry/错误上报；资产·订单历史 UI。
+### 25.5 前端健壮性收口（Tier A）✅
+
+- `apiClient.postJson`：默认 20s 请求**超时**（超时→`TIMEOUT` 显错而非静默 abort）；可选 `retries` 对**瞬时失败**（timeout/网络/502·503·504）指数退避重试（300/900ms…），**仅对安全/幂等端点开启**（sync、presence 已启），4xx/业务错误不重试。
+- 后端 **429 Retry-After**：限流 `RATE_LIMITED` 与登录防爆破 `TOO_MANY_ATTEMPTS` 现带 `error.details.retryAfterMs` + 响应头 `Retry-After`（秒）；登录提示语含具体秒数。
+- **离线检测**：`useOnlineStatus` hook（`navigator.onLine` + online/offline 事件）+ App 顶部离线横幅。
+- 测试：`src/utils/apiClient.test.js`（6 例：超时/重试/不重试 4xx/429 retryAfter/调用方 abort 透传）、`backend/tests/rateLimit.test.js`（2 例）。
+
+### 25.6 订单历史 UI（Tier A）✅
+
+- 后端 `POST /api/order/list`（`req.userId` 作用域，最多 50 条倒序，`orders.js#listOrders`，时间已格式化）；`backend/API.md` 已补。
+- 前端：`useGameStore` 加 `orders`/`loadOrders`（只读、`retries:1`）；`WalletModal` 新增「🧾 充值/订单记录」区（状态/支付方式/金额/时间）；打开钱包时一并加载。
+- 测试：`orders.test.js` 加 listOrders 作用域+排序+字段用例。
+
+**剩余 Tier A（未做）**：Sentry/错误上报（需 DSN）。
+
+## 第26轮（i18n 中英文，规划中）
+
+> 用户要求「添加 i18n 支持中英文」。XL（730+ 硬编码中文，36+ 组件）。待定 scope：UI chrome 国际化为主；是否同时切换小希 AI 回复语言 = 产品决策（需改系统提示词 + 本地兜底引擎仅中文）。

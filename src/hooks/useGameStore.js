@@ -78,6 +78,9 @@ export function useGameStore() {
   const [transactions, setTransactions] = useState([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
   const isLoadingTransactionsRef = useRef(false);
+  const [orders, setOrders] = useState([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const isLoadingOrdersRef = useRef(false);
   const [memories, setMemories] = useState([]);
   const [memorySummary, setMemorySummary] = useState('');
   const [isLoadingMemories, setIsLoadingMemories] = useState(false);
@@ -174,7 +177,7 @@ export function useGameStore() {
       setStateIfMounted(setSyncError, '');
 
       try {
-        const data = await postJson('/api/user/sync', { userId }, { signal: controller.signal });
+        const data = await postJson('/api/user/sync', { userId }, { signal: controller.signal, retries: 2 });
         if (controller.signal.aborted || !isMounted()) {
           return;
         }
@@ -260,7 +263,7 @@ export function useGameStore() {
 
     const poll = async () => {
       try {
-        const data = await postJson('/api/presence', { userId });
+        const data = await postJson('/api/presence', { userId }, { retries: 1 });
         if (cancelled || !isMounted()) return;
         if (typeof data.onlineCount === 'number') {
           setStateIfMounted(setOnlineCount, data.onlineCount);
@@ -322,6 +325,27 @@ export function useGameStore() {
     } finally {
       isLoadingTransactionsRef.current = false;
       setStateIfMounted(setIsLoadingTransactions, false);
+    }
+  }, [userId, isSyncing, notify, isMounted, setStateIfMounted]);
+
+  // ---- Recharge / order history (read-only; safe to retry on a flaky network) ----
+  const loadOrders = useCallback(async () => {
+    if (!userId || isSyncing || isLoadingOrdersRef.current) return false;
+    isLoadingOrdersRef.current = true;
+    setStateIfMounted(setIsLoadingOrders, true);
+    try {
+      const data = await postJson('/api/order/list', { userId }, { retries: 1 });
+      if (!isMounted()) return false;
+      setStateIfMounted(setOrders, Array.isArray(data.orders) ? data.orders : []);
+      return true;
+    } catch (err) {
+      if (isAbortError(err) || !isMounted()) return false;
+      logger.error('Failed to load orders', { error: err });
+      notify(err.message, 'error', '订单加载失败');
+      return false;
+    } finally {
+      isLoadingOrdersRef.current = false;
+      setStateIfMounted(setIsLoadingOrders, false);
     }
   }, [userId, isSyncing, notify, isMounted, setStateIfMounted]);
 
@@ -772,6 +796,9 @@ export function useGameStore() {
     transactions,
     isLoadingTransactions,
     loadTransactions,
+    orders,
+    isLoadingOrders,
+    loadOrders,
     memories,
     memorySummary,
     isLoadingMemories,

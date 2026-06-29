@@ -85,7 +85,10 @@ export function registerAccountRoutes(app, { authSecret }) {
     const ip = req.ip || req.socket?.remoteAddress || 'unknown';
     const gate = loginThrottle.check(identifier, ip);
     if (!gate.allowed) {
-      throw new AppError(429, 'TOO_MANY_ATTEMPTS', '登录尝试过于频繁，请稍后再试');
+      const retrySeconds = Math.max(1, Math.ceil((gate.retryAfterMs || 0) / 1000));
+      throw new AppError(429, 'TOO_MANY_ATTEMPTS', `登录尝试过于频繁，请 ${retrySeconds} 秒后再试`, {
+        retryAfterMs: gate.retryAfterMs,
+      });
     }
 
     const account = await findAccountByIdentifier(identifier);

@@ -344,6 +344,10 @@ http://localhost:3000
 
 查询订单状态。请求：`{ userId, orderId }` 或 `{ userId, outTradeNo }`。响应 `order`。
 
+### POST /api/order/list
+
+当前用户的充值/订单历史（最多 50 条，按时间倒序）。请求 `{ userId }`。响应 `{ orders: [{ id, outTradeNo, amount, coins, paymentMethod, status, createdAt, paidAt }] }`。仅返回该用户自己的订单（按 `req.userId` 作用域过滤）。驱动钱包页「充值/订单记录」区。
+
 ## Accounts（正式账号体系 / 游客绑定）
 
 - `POST /api/auth/register`：`{ userId, identifier, password }`（当 `REQUIRE_REGISTRATION_OTP` 开启时还需 `code` 验证码），把当前游客存档绑定到新账号。响应 `{ token, account }`；验证码无效返回 `INVALID_CODE`。
@@ -354,7 +358,7 @@ http://localhost:3000
 - `POST /api/auth/request-code`：`{ identifier, purpose }`（`purpose` 为 `register` 或 `reset`）。下发验证码（当前为服务端日志开发桩，接真实短信/邮件见 `verification.js`）。`register` 若账号已存在返回 `ACCOUNT_EXISTS`；`reset` 始终返回通用 `{ ok: true }`（仅对已存在账号实际发送，防账号枚举）。冷却期内重复请求返回 `CODE_COOLDOWN`。开启 `OTP_DEV_ECHO` 时响应附带 `devCode`（仅供开发，生产务必关闭）。
 - `POST /api/auth/reset-password`：`{ identifier, code, password }`。校验 `reset` 验证码后重置密码，并吊销该账号所有旧会话（递增 `token_version`），响应 `{ token, account }`（重置后直接登录）。验证码无效/过期返回 `INVALID_CODE`。
 
-`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）及 `ver`（账号 `token_version`，用于服务端吊销）。登录失败锁定为两级：同一 标识+IP（默认 5 次）与同一标识跨所有 IP（默认 10 次，防换 IP 绕过，env `LOGIN_THROTTLE_IDENTIFIER_*` 可调），命中返回 `TOO_MANY_ATTEMPTS`。
+`identifier` 支持手机号、邮箱或 3-32 位用户名；密码 6-64 位；密码使用 scrypt 加盐哈希存储，令牌使用 HMAC 签名并带过期时间（`AUTH_TOKEN_TTL_DAYS`，默认 30 天，过期返回 `AUTH_REQUIRED`）及 `ver`（账号 `token_version`，用于服务端吊销）。登录失败锁定为两级：同一 标识+IP（默认 5 次）与同一标识跨所有 IP（默认 10 次，防换 IP 绕过，env `LOGIN_THROTTLE_IDENTIFIER_*` 可调），命中返回 `TOO_MANY_ATTEMPTS`（HTTP 429，响应头带 `Retry-After`（秒），`error.details.retryAfterMs` 给毫秒级退避提示；全局限流 `RATE_LIMITED` 同样附带）。
 
 ## User Data（数据导出 / 注销，需登录）
 

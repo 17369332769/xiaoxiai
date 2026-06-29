@@ -6,6 +6,7 @@ import {
   createOrder,
   getOrder,
   getOrderByOutTradeNo,
+  listOrders,
   markOrderFailed,
   serializeOrder,
   settleOrder,
@@ -117,6 +118,15 @@ export function registerOrderRoutes(app, { paymentSecret, presence, logger, reso
       coins: settlement.coins,
       order: serializeOrder(settlement.order),
     });
+  }));
+
+  app.post('/api/order/list', asyncHandler(async (req, res) => {
+    const userId = req.userId;
+    const user = await dbGet('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) throw new AppError(404, 'USER_NOT_FOUND', 'User not found');
+
+    const orders = await listOrders(userId);
+    sendJson(res, { orders });
   }));
 
   app.post('/api/order/query', asyncHandler(async (req, res) => {
