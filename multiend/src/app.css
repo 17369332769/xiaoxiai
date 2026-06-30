@@ -1777,3 +1777,49 @@ page {
   color: #f3f4f6;
   font-family: 'Outfit', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
 }
+
+/* ---- Ported interaction states ----
+   Web <button> became Taro <View>, so the global `button{cursor:pointer}` and
+   `:disabled` rules no longer apply. Restore them via the modifier classes the
+   ported components append (`disabled`, and `is-disabled` in SyncStatusBanner). */
+.btn-primary, .btn-secondary, .task-btn, .action-btn, .close-btn,
+.memory-delete-btn, .notification-close, .sync-status-action, .checkin-btn,
+.header-checkin-btn, .lang-toggle, .voice-btn, .send-btn, .mic-btn,
+.shop-item-btn, .gift-item-btn, .tip-tier-btn, .recharge-btn, .story-choice,
+.story-nav-btn, .theme-action-btn, .char-switch-btn, .retry-btn, .modal-close {
+  cursor: pointer;
+}
+
+/* Generic disabled look — opacity + no-hover + not-allowed, matching the old
+   `:disabled` feel for buttons whose CSS only had opacity-style disabling. */
+.disabled,
+.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Faithful match of the original `.task-btn:disabled` (bg/colour swap, not opacity). */
+.task-btn.disabled {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border-color: transparent;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+/* ---- Mobile-first dashboard (mini-program adaptation) ----
+   The original layout was desktop two-column with a `@media(max-width:1024px)`
+   collapse — but weapp drops some max-width media queries, so a mini-program
+   could get stuck two-column and overflow. Invert to mobile-first: single column
+   by default (what every phone + mini-program gets), widening to two columns only
+   on a genuinely wide viewport. This is also grid-safe: if weapp ignores CSS grid,
+   the children just block-stack — still a single column. */
+.main-dashboard {
+  grid-template-columns: 1fr;
+}
+@media (min-width: 1025px) {
+  .main-dashboard {
+    grid-template-columns: 450px 1fr;
+  }
+}

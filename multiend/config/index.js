@@ -3,8 +3,13 @@ const path = require('path');
 const config = {
   projectName: 'xiaoxiai-multiend',
   date: '2026-6-30',
-  designWidth: 750,
-  deviceRatio: { 640: 2.34 / 2, 750: 1, 828: 1.81 / 2 },
+  // 375 (not the Taro default 750) because the migrated CSS is hand-tuned in
+  // DESKTOP px. On mini-program (pxtransform on), designWidth 750 would halve
+  // every size on a 375px phone → microscopic text; 375 maps px ≈ physical px so
+  // text stays readable, and the index.css @media breakpoints (1024/768/600)
+  // collapse the dashboard to a single mobile column. (H5 has pxtransform off.)
+  designWidth: 375,
+  deviceRatio: { 375: 2 / 1, 640: 2.34 / 2, 750: 1, 828: 1.81 / 2 },
   sourceRoot: 'src',
   outputRoot: 'dist',
   plugins: [],
