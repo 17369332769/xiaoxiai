@@ -4,6 +4,16 @@
 // moderation service. The built-in list is intentionally small and coarse;
 // operators extend it at runtime via the EXTRA_BLOCKED_WORDS env var
 // (comma-separated) without code changes.
+//
+// For production / mini-program review the wordlist is the BASELINE only. A real
+// model-grade provider (阿里云/腾讯云 内容安全, etc.) is registered at startup via
+// setModerationProvider() and composed in moderateText(); every block is recorded
+// to content_safety_events via logSafetyEvent() so operators can audit and tune.
+
+import { dbRun, dbAll } from '../core/db.js';
+import { createLogger } from '../core/logger.js';
+
+const logger = createLogger('content-safety');
 
 export const BUILTIN_BLOCKED_WORDS = {
   violence: ['制造炸弹', '炸弹制作', '恐怖袭击', '枪支弹药', '武器制造'],
@@ -48,4 +58,89 @@ export function checkContentSafety(text, extraWords = getExtraBlockedWords()) {
   }
 
   return { safe: true };
+}
+
+// ---- Pluggable external moderation provider --------------------------------
+// Off by default. An operator registers a real provider (e.g. a 阿里云/腾讯云
+// content-safety call) at startup. The built-in wordlist is the AUTHORITATIVE
+// baseline: a provider may only ESCALATE a safe verdict to blocked (never
+// downgrade a wordlist hit), and a provider error falls back to the wordlist
+// verdict — so an external outage can never silently disable moderation.
+let externalProvider = null;
+
+export function setModerationProvider(fn) {
+  externalProvider = typeof fn === 'function' ? fn : null;
+}
+
+export function hasModerationProvider() {
+  return Boolean(externalProvider);
+}
+
+// Async, provider-aware moderation. Returns the same shape as checkContentSafety
+// plus a `source` ('wordlist' | 'provider' | 'wordlist-fallback'). Prefer this at
+// new call sites; checkContentSafety stays for the sync paths (TTS / memory).
+export async function moderateText(text, { extraWords = getExtraBlockedWords() } = {}) {
+  const baseline = checkContentSafety(text, extraWords);
+  if (!baseline.safe || !externalProvider) {
+    return { ...baseline, source: 'wordlist' };
+  }
+
+  try {
+    const verdict = await externalProvider(text);
+    if (verdict && verdict.safe === false) {
+      return {
+        safe: false,
+        matched: verdict.matched || '',
+        category: verdict.category || 'external',
+        source: 'provider',
+      };
+    }
+    return { safe: true, source: 'provider' };
+  } catch (error) {
+    logger.warn('External moderation provider failed; using wordlist verdict', { error: error.message });
+    return { ...baseline, source: 'wordlist-fallback' };
+  }
+}
+
+// ---- Safety event audit log ------------------------------------------------
+function newSafetyEventId() {
+  return `cse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Best-effort: a logging failure must never break a chat request, so every write
+// is wrapped and only warns on error (mirrors the analytics recorder).
+export async function logSafetyEvent({
+  userId = null,
+  scope = 'unknown',
+  category = 'unknown',
+  matched = '',
+  action = 'blocked',
+  source = 'wordlist',
+} = {}) {
+  try {
+    await dbRun(
+      `INSERT INTO content_safety_events (id, user_id, scope, category, matched, action, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [newSafetyEventId(), userId, scope, category, String(matched || '').slice(0, 100), action, source]
+    );
+    return true;
+  } catch (error) {
+    logger.warn('Failed to record content-safety event', { error: error.message });
+    return false;
+  }
+}
+
+export async function loadSafetyEvents(limit = 80) {
+  try {
+    return await dbAll(
+      `SELECT id, user_id as userId, scope, category, matched, action, source,
+              strftime('%m-%d %H:%M', created_at, 'localtime') as timestamp
+       FROM content_safety_events
+       ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      [limit]
+    );
+  } catch (error) {
+    logger.warn('Failed to load content-safety events', { error: error.message });
+    return [];
+  }
 }

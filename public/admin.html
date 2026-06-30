@@ -76,6 +76,11 @@
       </div>
 
       <div class="panel">
+        <h2>🛡️ 内容安全拦截记录（用户输入拦截 / AI 回复替换）</h2>
+        <div class="scroll"><table id="safetyTbl"></table></div>
+      </div>
+
+      <div class="panel">
         <h2>⚙️ 运营配置（改价 / 打赏档 / 任务奖励，保存后下次购买或同步即生效）</h2>
         <div id="configBox" class="scroll"></div>
         <div class="row" style="margin-top:12px;">
@@ -133,7 +138,8 @@
         const m = stats.milestones || {};
         document.getElementById('stats').innerHTML = [
           ['总用户', stats.totalUsers], ['今日新增', stats.newUsersToday], ['DAU', stats.dau],
-          ['次日留存', stats.retentionRate + '%'], ['付费用户', stats.payingUsers],
+          ['次日留存(D1)', (stats.nextDayRetention ?? 0) + '%'], ['活跃回访率', stats.retentionRate + '%'],
+          ['付费用户', stats.payingUsers],
           ['付费转化', stats.payConversion + '%'], ['总营收(¥)', stats.totalRevenue], ['ARPPU(¥)', stats.arppu],
           ['首次对话', m.firstChat], ['首次签到', m.firstCheckin], ['首次送礼', m.firstGift], ['首次打赏/充值', m.firstTip],
         ].map(([k, v]) => `<div class="stat"><div class="label">${k}</div><div class="value">${esc(v)}</div></div>`).join('');
@@ -159,6 +165,13 @@
         document.getElementById('eventsTbl').innerHTML =
           '<tr><th>时间</th><th>用户</th><th>类型</th><th>详情</th></tr>' +
           events.map((e) => `<tr><td>${esc(e.timestamp)}</td><td>${esc(e.user_id)}</td><td>${esc(e.type)}</td><td>${esc(e.payload)}</td></tr>`).join('');
+
+        const { events: safety } = await api('/api/admin/safety-events');
+        document.getElementById('safetyTbl').innerHTML =
+          '<tr><th>时间</th><th>用户</th><th>位置</th><th>类别</th><th>命中</th><th>动作</th><th>来源</th></tr>' +
+          (safety.length
+            ? safety.map((e) => `<tr><td>${esc(e.timestamp)}</td><td>${esc(e.userId)}</td><td>${esc(e.scope)}</td><td>${esc(e.category)}</td><td>${esc(e.matched)}</td><td>${esc(e.action)}</td><td>${esc(e.source)}</td></tr>`).join('')
+            : '<tr><td colspan="7" style="color:var(--muted)">暂无拦截记录</td></tr>');
 
         const { config } = await api('/api/admin/config');
         renderConfig(config);

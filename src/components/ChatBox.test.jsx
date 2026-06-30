@@ -91,6 +91,22 @@ describe('ChatBox', () => {
     expect(container.textContent).toContain('你好呀，亲爱的');
   });
 
+  test('labels AI replies with a visible "AI 生成" badge (compliance disclosure)', () => {
+    render(
+      <ChatBox
+        chatHistory={[
+          { id: 'u1', sender: 'user', text: '你好呀', timestamp: '10:00' },
+          { id: 'ai1', sender: 'ai', text: '你好，亲爱的～', avatarState: 'normal', timestamp: '10:01' },
+        ]}
+        sendMessage={vi.fn()}
+      />
+    );
+
+    // Exactly one badge — on the AI bubble, not the user bubble.
+    const badges = screen.getAllByText('AI 生成');
+    expect(badges).toHaveLength(1);
+  });
+
   test('renders a URL in an AI reply as a clickable new-tab link', () => {
     render(
       <ChatBox

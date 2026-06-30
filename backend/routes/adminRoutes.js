@@ -3,6 +3,7 @@ import { AppError } from '../core/appError.js';
 import { asyncHandler, sendJson } from '../core/httpUtils.js';
 import { createRequireAdmin } from '../services/adminAuth.js';
 import { getStats, loadRecentEvents } from '../services/analytics.js';
+import { loadSafetyEvents } from '../services/contentSafety.js';
 import { deactivateBroadcast, loadBroadcasts, pushBroadcast } from '../services/broadcasts.js';
 import { refundOrder, serializeOrder } from '../services/orders.js';
 import { loadAdminAudit, recordAdminAudit } from '../services/adminAudit.js';
@@ -54,6 +55,14 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
   app.post('/api/admin/events', asyncHandler(async (req, res) => {
     const limit = clampLimit(req.body?.limit, 80, 300);
     const events = await loadRecentEvents(limit);
+    sendJson(res, { events });
+  }));
+
+  // Content-safety audit trail: blocked user inputs + replaced AI outputs, so
+  // operators can review minor-protection hits and abuse patterns.
+  app.post('/api/admin/safety-events', asyncHandler(async (req, res) => {
+    const limit = clampLimit(req.body?.limit, 80, 300);
+    const events = await loadSafetyEvents(limit);
     sendJson(res, { events });
   }));
 

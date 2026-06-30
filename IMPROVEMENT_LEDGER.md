@@ -442,3 +442,19 @@
 **实测结果**：H5 ✅ + 微信小程序 ✅ + 支付宝小程序 ✅ 三端**同一份代码**构建通过；后端契约冒烟 `/api/user/sync → 200 {ok:true,user,chatHistory}` 正是 request 适配器期望的信封。主仓库 `eslint .` 加 `globalIgnores(['dist','multiend'])` 后仍绿（multiend 自带工具链/约定，不进 Web 发布门禁）。
 
 **待办**：小程序端 CSS 视觉微调（grid/fixed/var()/伪元素差异，见各组件 residualRisks）；App(RN) 需真机/原生环境出包（适配器已就绪）；其余小程序端（抖音/百度/QQ）按需 `--type` 开启；`downloadJson` 导出在小程序需换 Taro 文件 API。**上线阻断项**：AI 情感陪伴类目在微信/抖音/支付宝小程序审核极严，需先核对类目政策；后端须 HTTPS+备案域名+request 合法域名白名单。
+
+## 第28轮（需求文档对账复核 + 合规/正确性补强）
+
+> 用户「根据需求文档分析还缺什么」→「按你的理解完成」。先用只读多代理工作流逐条对账《需求分析文档.md》第 6 节状态总表（19 项全标"已完成"）与真实代码，结论：**3 名副其实 / 9 部分完成 / 1 名不副实（内容安全）/ 1 文档未覆盖但上线必需（法律合规）**；并修正两处文档低估（SSE 流式、AI 输出审核其实已做）。随后补齐纯代码、不依赖外部资源的高价值缺口。
+
+**内容安全升级（直击唯一"名不副实"）**：新增 `content_safety_events` 审计表（db.js #14）；`contentSafety.js` 增 `logSafetyEvent/loadSafetyEvents` + **可插拔三方审核 hook** `moderateText`/`setModerationProvider`/`hasModerationProvider`——**词表为权威基线**（命中即拦、短路不调 provider），provider **仅可升级不可降级**，出错回退词表（永不 fail-open）。`/api/chat`、`/api/chat/stream` 输入改用 `moderateText` 并落审计；流式 AI 输出拦截也落审计。运营后台新增 `/api/admin/safety-events` + "🛡️ 内容安全拦截记录"面板。`.env.example` 注明 provider 注册方式。
+
+**AI 生成内容显式标识（合规法定，《人工智能生成合成内容标识办法》2025-09-01 施行）**：`ChatBox` 每条 AI 气泡加可见"AI 生成"角标（i18n 中英 `chat.aiGenerated/aiGeneratedHint`）；`sender='ai'` 作为持久化机器可读标记。
+
+**数据正确性（留存口径）**：`analytics.getStats` 原 `retentionRate` 实为"活跃回访率"却被后台误称"次日留存"。新增基于注册 cohort 的真实**次日留存(D1)** `nextDayRetention`（用 `users.created_at` 而非不可排序的 `day_key` 串），保留旧值并新增 `returnRate` 别名；`admin.html` 拆成"次日留存(D1)"+"活跃回访率"两块正名。
+
+**测试**：新增 `backend/tests/content-safety.test.js`（5 例：审计读写、provider 升级、词表权威短路、provider 出错回退）；`analytics.test.js` 加 cohort 留存用例；`ChatBox.test.jsx` 加"AI 生成"角标断言。`npm run verify` 全绿。
+
+**交付物**：`LAUNCH_CHECKLIST.md`（按 法律合规/基础设施/内容安全/业务闭环/质量 分组、标责任方的上线可勾选清单）；《需求分析文档.md》新增 §9 复核修正章节。
+
+**仍待外部资源（不在本轮范围）**：真实商户号与生产补单/对账、OTP 真实通道、实名+青少年模式、算法备案、隐私政策法务定稿、运营后台商品/任务 CRUD——详见 `LAUNCH_CHECKLIST.md`。

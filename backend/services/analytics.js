@@ -79,6 +79,8 @@ export async function getStats() {
     revenueRow,
     paidOrdersRow,
     returningRow,
+    yesterdayCohortRow,
+    yesterdayRetainedRow,
   ] = await Promise.all([
     dbGet('SELECT COUNT(*) as c FROM users'),
     dbGet("SELECT COUNT(*) as c FROM users WHERE date(created_at, 'localtime') = date('now', 'localtime')"),
@@ -91,6 +93,17 @@ export async function getStats() {
        WHERE e.day_key = ?
          AND EXISTS (SELECT 1 FROM events e2 WHERE e2.user_id = e.user_id AND e2.day_key <> ?)`,
       [todayKey, todayKey]
+    ),
+    // Next-day (D1) retention cohort: users who registered yesterday. Cohort is
+    // keyed on users.created_at (a real DATETIME) rather than MIN(day_key) because
+    // day_key is a non-zero-padded locale string ("2026/6/9") that does not sort.
+    dbGet("SELECT COUNT(*) as c FROM users WHERE date(created_at, 'localtime') = date('now', '-1 day', 'localtime')"),
+    // ...of whom were active today (have any event with today's day_key).
+    dbGet(
+      `SELECT COUNT(DISTINCT u.id) as c FROM users u
+       WHERE date(u.created_at, 'localtime') = date('now', '-1 day', 'localtime')
+         AND EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.id AND e.day_key = ?)`,
+      [todayKey]
     ),
   ]);
 
@@ -105,13 +118,23 @@ export async function getStats() {
   const totalRevenue = safeNumber(revenueRow?.s);
   const dau = safeNumber(dauRow?.c);
   const returning = safeNumber(returningRow?.c);
+  const yesterdayCohort = safeNumber(yesterdayCohortRow?.c);
+  const yesterdayRetained = safeNumber(yesterdayRetainedRow?.c);
 
   return {
     totalUsers: safeNumber(totalUsersRow?.c),
     newUsersToday: safeNumber(newUsersTodayRow?.c),
     dau,
     returningUsersToday: returning,
+    // Share of today's active users who were also active on some earlier day —
+    // a "returning-user rate", NOT the standard D1 retention (kept for the
+    // existing dashboard tile; see nextDayRetention for true cohort retention).
+    returnRate: dau > 0 ? Math.round((returning / dau) * 100) : 0,
     retentionRate: dau > 0 ? Math.round((returning / dau) * 100) : 0,
+    // Standard next-day (D1) retention: of users who registered yesterday, the
+    // share active again today. 0 when yesterday had no new registrations.
+    newUsersYesterday: yesterdayCohort,
+    nextDayRetention: yesterdayCohort > 0 ? Math.round((yesterdayRetained / yesterdayCohort) * 100) : 0,
     payingUsers,
     paidOrders: safeNumber(paidOrdersRow?.c),
     totalRevenue: Math.round(totalRevenue * 100) / 100,

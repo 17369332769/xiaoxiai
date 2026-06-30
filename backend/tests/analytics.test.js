@@ -55,6 +55,28 @@ test('getStats computes DAU, retention, paying conversion and ARPPU from seeded 
   assert.equal(stats.arppu, 52); // 52 revenue / 1 paying user
   assert.equal(stats.payConversion, 50); // 1 paying / 2 total users
   assert.equal(stats.milestones.firstChat, 1);
+  // u1/u2 both registered "today" → no yesterday cohort yet.
+  assert.equal(stats.newUsersYesterday, 0);
+  assert.equal(stats.nextDayRetention, 0);
+});
+
+test('getStats next-day retention uses the yesterday registration cohort', async () => {
+  // A user who registered yesterday and came back today = retained (D1).
+  await dbRun(
+    "INSERT INTO users (id, level, affection, energy, mood, coins, created_at) VALUES ('ret1', 1, 10, 80, 70, 200, datetime('now', '-1 day', 'localtime'))"
+  );
+  await dbRun(
+    "INSERT INTO events (id, user_id, type, payload, day_key) VALUES ('re1', 'ret1', 'session', '{}', ?)",
+    [todayKey]
+  );
+  // A user who registered yesterday but did NOT return today = churned.
+  await dbRun(
+    "INSERT INTO users (id, level, affection, energy, mood, coins, created_at) VALUES ('ret2', 1, 10, 80, 70, 200, datetime('now', '-1 day', 'localtime'))"
+  );
+
+  const stats = await analytics.getStats();
+  assert.equal(stats.newUsersYesterday, 2);
+  assert.equal(stats.nextDayRetention, 50); // 1 of 2 yesterday-cohort users returned
 });
 
 test('getStats outputs are finite numbers (no NaN leaking from guarded ratios)', async () => {
@@ -64,6 +86,7 @@ test('getStats outputs are finite numbers (no NaN leaking from guarded ratios)',
   assert.ok(Number.isFinite(stats.arppu));
   assert.ok(Number.isFinite(stats.totalRevenue));
   assert.ok(Number.isInteger(stats.retentionRate));
+  assert.ok(Number.isInteger(stats.nextDayRetention));
   assert.ok(Number.isInteger(stats.payConversion));
   assert.ok(Number.isInteger(stats.dau));
 });

@@ -26,7 +26,7 @@ import {
 import { loadRelationshipProfile, reflectAndConsolidate } from '../services/memory/memoryEngine.js';
 import { getLocalAIResponse } from '../services/ai/aiRuntime.js';
 import { executeSkill, getEnabledSkills, getSkillsPromptBlock } from '../skills/registry.js';
-import { checkContentSafety } from '../services/contentSafety.js';
+import { checkContentSafety, moderateText, logSafetyEvent } from '../services/contentSafety.js';
 import { buildPersonaContext, getStateConstrainedReply, getRecallGreeting } from '../services/personaEngine.js';
 import { recordDailyActive, recordEvent, recordFirstTime } from '../services/analytics.js';
 import { pushBroadcast } from '../services/broadcasts.js';
@@ -649,6 +649,7 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
     const safety = checkContentSafety(full);
     if (!safety.safe) {
       logger?.warn?.('Blocked unsafe streamed reply', { userId, category: safety.category });
+      await logSafetyEvent({ userId, scope: 'ai_output', category: safety.category, matched: safety.matched, action: 'replaced' });
       return { reply: SAFE_FALLBACK_REPLY, emotion: 'normal', affection_bump: 0, mood_bump: 0, replaced: true };
     }
 
@@ -814,9 +815,10 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     const userId = req.userId;
     const text = sanitizeText(req.body?.text);
 
-    const safety = checkContentSafety(text);
+    const safety = await moderateText(text);
     if (!safety.safe) {
       logger.warn('Blocked unsafe chat input', { userId, category: safety.category });
+      await logSafetyEvent({ userId, scope: 'chat_input', category: safety.category, matched: safety.matched, action: 'blocked', source: safety.source });
       const message = safety.category === 'minor_protection'
         ? '小希只想做你温暖的朋友哦，未成年的小朋友要健康快乐地长大呀，我们聊点轻松的话题吧~'
         : '这个话题小希不太方便聊呢，我们换个轻松点的话题好不好？';
@@ -894,9 +896,10 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
 
     // Input safety + user/energy/persist all run BEFORE the SSE stream starts, so
     // these can still be reported as normal JSON errors.
-    const safety = checkContentSafety(text);
+    const safety = await moderateText(text);
     if (!safety.safe) {
       logger.warn('Blocked unsafe chat input', { userId, category: safety.category });
+      await logSafetyEvent({ userId, scope: 'chat_input', category: safety.category, matched: safety.matched, action: 'blocked', source: safety.source });
       const message = safety.category === 'minor_protection'
         ? '小希只想做你温暖的朋友哦，未成年的小朋友要健康快乐地长大呀，我们聊点轻松的话题吧~'
         : '这个话题小希不太方便聊呢，我们换个轻松点的话题好不好？';

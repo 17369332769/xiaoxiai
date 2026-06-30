@@ -346,6 +346,25 @@ async function initializeTables() {
       )
     `);
 
+    // 14. Content Safety Events (audit trail of blocked/replaced unsafe content).
+    // Every time the moderation filter trips — on user input or on a model reply —
+    // we append a row here so operators can review minor-protection hits, spot
+    // abuse patterns, and tune the wordlist / external provider. Append-only.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS content_safety_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        scope TEXT,
+        category TEXT,
+        matched TEXT,
+        action TEXT DEFAULT 'blocked',
+        source TEXT DEFAULT 'wordlist',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await dbRun('CREATE INDEX IF NOT EXISTS idx_safety_events_created ON content_safety_events(created_at)');
+    await dbRun('CREATE INDEX IF NOT EXISTS idx_safety_events_category ON content_safety_events(category)');
+
     await runColumnMigrations();
 
     const relationshipEventColumns = [

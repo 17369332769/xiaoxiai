@@ -136,6 +136,23 @@ function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpe
           <span className="typing-caret" aria-hidden="true">▍</span>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+          {/* Mandatory AI-generated content label (《人工智能生成合成内容标识办法》).
+              Shown on every assistant reply so the disclosure is always visible. */}
+          <span
+            className="ai-generated-badge"
+            title={t('chat.aiGeneratedHint')}
+            style={{
+              fontSize: '10px',
+              lineHeight: 1.4,
+              padding: '1px 6px',
+              borderRadius: '8px',
+              background: 'rgba(255, 255, 255, 0.14)',
+              color: 'var(--text-muted)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t('chat.aiGenerated')}
+          </span>
           <span className="message-timestamp" style={{ margin: 0 }}>{msg.timestamp}</span>
           {onPlayVoice && fullText && !streaming && (
             <button
