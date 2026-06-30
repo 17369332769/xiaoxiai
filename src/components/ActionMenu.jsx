@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useT } from '../i18n/index.js';
 
 const { useState } = React;
 
@@ -22,6 +23,7 @@ export default function ActionMenu({
   retryLastFailedAction,
   isRetryingFailedAction = false,
 }) {
+  const t = useT();
   const [showTasks, setShowTasks] = useState(false);
 
   // Check if there are any unclaimed completed tasks
@@ -61,14 +63,14 @@ export default function ActionMenu({
           </div>
 
           <div className="task-reward">
-            <span><span className="coin-icon"></span> +{task.reward} 爱心币</span>
+            <span><span className="coin-icon"></span> {t('tasks.reward', { reward: task.reward })}</span>
           </div>
         </div>
 
         {/* Task Action Button */}
         <div>
           {task.claimed ? (
-            <button disabled className="task-btn">已领完</button>
+            <button disabled className="task-btn">{t('tasks.claimed')}</button>
           ) : task.completed ? (
             <button onClick={() => claimTaskReward(task.id)} disabled={isClaiming || isInteractionLocked} className="task-btn" style={{
               background: 'linear-gradient(135deg, #4ade80 0%, #22c55e 100%)',
@@ -76,10 +78,10 @@ export default function ActionMenu({
               borderColor: '#22c55e',
               animation: 'breathe 2s infinite'
             }}>
-              {isClaiming ? '领奖中...' : '领奖励'}
+              {isClaiming ? t('tasks.claiming') : t('tasks.claim')}
             </button>
           ) : (
-            <button disabled className="task-btn" style={{ opacity: 0.6 }}>未达成</button>
+            <button disabled className="task-btn" style={{ opacity: 0.6 }}>{t('tasks.locked')}</button>
           )}
         </div>
       </div>
@@ -91,7 +93,7 @@ export default function ActionMenu({
       {/* Quick Action Navigation */}
       <div>
         <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>💖 互动与培养 (Interaction & Play)</span>
+          <span>{t('actions.sectionTitle')}</span>
           {pendingTaskCount > 0 && (
             <span style={{
               background: '#ff477e',
@@ -102,7 +104,7 @@ export default function ActionMenu({
               fontWeight: 'bold',
               animation: 'breathe 1.5s infinite'
             }}>
-              {pendingTaskCount} 个奖励待领
+              {t('actions.rewardsPending', { count: pendingTaskCount })}
             </span>
           )}
         </div>
@@ -110,7 +112,7 @@ export default function ActionMenu({
         {lastFailedAction?.kind === 'task-claim' && (
           <div className="action-retry-banner">
             <div className="action-retry-copy">
-              <div className="action-retry-label">上一次领奖失败</div>
+              <div className="action-retry-label">{t('actions.claimFailed')}</div>
               <div className="action-retry-preview">{lastFailedAction.label}</div>
             </div>
             <button
@@ -119,7 +121,7 @@ export default function ActionMenu({
               onClick={retryLastFailedAction}
               disabled={isInteractionLocked || isRetryingFailedAction}
             >
-              {(isInteractionLocked || isRetryingFailedAction) ? '重试中...' : '重试领奖'}
+              {(isInteractionLocked || isRetryingFailedAction) ? t('common.retrying') : t('actions.retryClaim')}
             </button>
           </div>
         )}
@@ -128,59 +130,59 @@ export default function ActionMenu({
           {/* Feed Shop Button */}
           <button onClick={() => openShop('food')} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🍔</span>
-            <span>喂食商店</span>
+            <span>{t('actions.feedShop')}</span>
           </button>
 
           {/* Gift Shop Button */}
           <button onClick={() => openShop('gift')} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🎁</span>
-            <span>送礼商店</span>
+            <span>{t('actions.giftShop')}</span>
           </button>
 
           {/* Tipping / Donation Button */}
           <button onClick={openTipping} className="btn-primary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon" style={{ textShadow: 'none' }}>💝</span>
-            <span>在线打赏</span>
+            <span>{t('actions.tip')}</span>
           </button>
 
           {/* Wallet / Transaction History Button */}
           <button onClick={openWallet} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">📒</span>
-            <span>消费记录</span>
+            <span>{t('actions.wallet')}</span>
           </button>
 
           {/* Memory Center Button */}
           <button onClick={openMemory} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">📔</span>
-            <span>小希的记忆</span>
+            <span>{t('actions.memory')}</span>
           </button>
 
           {/* Theme / Wardrobe Button */}
           <button onClick={openTheme} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">🎀</span>
-            <span>形象换装</span>
+            <span>{t('actions.theme')}</span>
           </button>
 
           {/* Story / 剧情 Button */}
           <button onClick={openStory} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">📖</span>
-            <span>恋爱剧情</span>
+            <span>{t('actions.story')}</span>
           </button>
 
           {/* Character Skin Switch Button */}
           <button
             onClick={onSwitchCharacter}
             className="btn-secondary action-btn"
-            title={characterSkin === 'xiaoxi' ? '当前：小希立绘，点击换小雅' : '当前：小雅立绘，点击换小希'}
+            title={characterSkin === 'xiaoxi' ? t('actions.switchXiaoyaTitle') : t('actions.switchXiaoxiTitle')}
           >
             <span className="action-icon">🧑‍🎨</span>
-            <span>{characterSkin === 'xiaoxi' ? '换小雅' : '换小希'}</span>
+            <span>{characterSkin === 'xiaoxi' ? t('actions.switchToXiaoya') : t('actions.switchToXiaoxi')}</span>
           </button>
 
           {/* Account Center Button */}
           <button onClick={openAuth} className="btn-secondary action-btn" disabled={isInteractionLocked}>
             <span className="action-icon">{accountBound ? '💞' : '👤'}</span>
-            <span>{accountBound ? '我的账号' : '登录/注册'}</span>
+            <span>{accountBound ? t('actions.myAccount') : t('actions.loginRegister')}</span>
           </button>
 
           {/* Task List Toggle Button */}
@@ -189,7 +191,7 @@ export default function ActionMenu({
             color: showTasks ? 'var(--text-pink)' : ''
           }}>
             <span className="action-icon">📋</span>
-            <span>任务清单</span>
+            <span>{t('actions.taskList')}</span>
           </button>
         </div>
       </div>
@@ -198,9 +200,9 @@ export default function ActionMenu({
       {showTasks && (
         <div className="daily-tasks-card">
           <div className="task-category-title">
-            <span>📅 今日日常任务 (Daily)</span>
+            <span>{t('tasks.dailyTitle')}</span>
             {checkinStreak > 0 && (
-              <span className="task-category-pill">🔥 连续签到 {checkinStreak} 天</span>
+              <span className="task-category-pill">{t('tasks.checkinStreak', { streak: checkinStreak })}</span>
             )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -210,8 +212,8 @@ export default function ActionMenu({
           {growthTasks.length > 0 && (
             <>
               <div className="task-category-title">
-                <span>🌱 成长成就任务 (Growth)</span>
-                <span className="task-category-pill">长期累计 · 不重置</span>
+                <span>{t('tasks.growthTitle')}</span>
+                <span className="task-category-pill">{t('tasks.growthSub')}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {growthTasks.map(renderTask)}

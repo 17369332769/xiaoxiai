@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useT } from '../i18n/index.js';
 
 const { useState } = React;
 
@@ -13,6 +14,7 @@ export default function ThemeModal({
   equipTheme,
   notify,
 }) {
+  const t = useT();
   const [busyId, setBusyId] = useState(null);
 
   if (!isOpen) return null;
@@ -24,32 +26,32 @@ export default function ThemeModal({
     setBusyId(theme.id);
     const ok = await equipTheme?.(theme.id);
     setBusyId(null);
-    if (ok) notify?.(`已切换到「${theme.name}」`, 'success', '换装成功');
+    if (ok) notify?.(t('theme.equipSuccess', { name: theme.name }), 'success', t('theme.equipSuccessTitle'));
   };
 
   const handleUnlock = async (theme) => {
     if (busyId) return;
     if (coins < theme.cost) {
-      notify?.('爱心币不足，先去完成任务或充值补充一下吧~', 'warning', '余额不足');
+      notify?.(t('theme.insufficient'), 'warning', t('theme.insufficientTitle'));
       return;
     }
     setBusyId(theme.id);
     const ok = await unlockTheme?.(theme.id);
     setBusyId(null);
-    if (ok) notify?.(`已解锁并换上「${theme.name}」`, 'success', '解锁成功');
+    if (ok) notify?.(t('theme.unlockSuccess', { name: theme.name }), 'success', t('theme.unlockSuccessTitle'));
   };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
         <div className="modal-header">
-          <div className="modal-title"><span>🎀</span><span>形象换装 · 主题 (Themes)</span></div>
+          <div className="modal-title"><span>🎀</span><span>{t('theme.title')}</span></div>
           <button className="close-btn" onClick={onClose}>&times;</button>
         </div>
 
         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-          用爱心币解锁主题，随时切换小希与界面的氛围配色。
-          <span style={{ color: 'var(--accent-gold)', marginLeft: '6px' }}>余额 {coins} 爱心币</span>
+          {t('theme.intro')}
+          <span style={{ color: 'var(--accent-gold)', marginLeft: '6px' }}>{t('theme.balance', { coins })}</span>
         </div>
 
         <div style={{ display: 'grid', gap: '10px', maxHeight: '60vh', overflowY: 'auto' }}>
@@ -84,7 +86,7 @@ export default function ThemeModal({
                   <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{theme.desc}</div>
                 </div>
                 {equipped ? (
-                  <span style={{ fontSize: '12px', color: 'var(--primary-pink)', fontWeight: 600, whiteSpace: 'nowrap' }}>使用中</span>
+                  <span style={{ fontSize: '12px', color: 'var(--primary-pink)', fontWeight: 600, whiteSpace: 'nowrap' }}>{t('theme.inUse')}</span>
                 ) : owned ? (
                   <button
                     className="btn-secondary"
@@ -92,7 +94,7 @@ export default function ThemeModal({
                     onClick={() => handleEquip(theme)}
                     disabled={busy}
                   >
-                    {busy ? '...' : '切换'}
+                    {busy ? '...' : t('theme.equip')}
                   </button>
                 ) : (
                   <button
@@ -101,7 +103,7 @@ export default function ThemeModal({
                     onClick={() => handleUnlock(theme)}
                     disabled={busy}
                   >
-                    {busy ? '...' : `解锁 ${theme.cost}`}
+                    {busy ? '...' : t('theme.unlock', { cost: theme.cost })}
                   </button>
                 )}
               </div>

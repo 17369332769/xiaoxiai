@@ -1,4 +1,7 @@
+import { useT } from '../i18n/index.js';
+
 export default function SyncStatusBanner({ syncError, isSyncing, retrySync }) {
+  const t = useT();
   if (!syncError) {
     return null;
   }
@@ -6,7 +9,7 @@ export default function SyncStatusBanner({ syncError, isSyncing, retrySync }) {
   return (
     <div className="sync-status-banner glass-panel" role="status" aria-live="polite">
       <div className="sync-status-copy">
-        <div className="sync-status-title">后端连接失败</div>
+        <div className="sync-status-title">{t('syncBanner.title')}</div>
         <div className="sync-status-message">
           {syncError}
         </div>
@@ -17,7 +20,7 @@ export default function SyncStatusBanner({ syncError, isSyncing, retrySync }) {
         onClick={retrySync}
         disabled={isSyncing}
       >
-        {isSyncing ? '重试中...' : '重新连接'}
+        {isSyncing ? t('common.retrying') : t('syncBanner.retry')}
       </button>
     </div>
   );

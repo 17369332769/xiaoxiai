@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useT } from '../i18n/index.js';
 
 // 小希 立绘
 import xiaoxiNormal from '../assets/characters/xiaoxi/normal.jpg';
@@ -43,16 +44,11 @@ function linkifyText(text) {
   ));
 }
 
-const QUICK_PROMPTS = [
-  '小希，你现在饿了吗？',
-  '你最喜欢什么礼物呀？',
-  '小希，你可以亲我一下吗？',
-  '给我讲个甜蜜的情话吧~',
-  '今天有点累，求安抚...'
-];
+// Suggested quick prompts now live in the i18n dictionary (chat.quickPrompts).
 
 // Sub-component for AI messages (with interactive avatar and dynamic reactions)
 function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpeaking = false, characterSkin = 'xiaoxi' }) {
+  const t = useT();
   const [hearts, setHearts] = useState([]);
   const fullText = msg.text || '';
   const [displayText, setDisplayText] = useState(animate ? '' : fullText);
@@ -110,7 +106,7 @@ function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpe
 
   return (
     <div className="message-row row-ai">
-      <div className="ai-avatar-container" onClick={handleAvatarClick} title="点击给小希送爱心">
+      <div className="ai-avatar-container" onClick={handleAvatarClick} title={t('chat.avatarHeart')}>
         <img
           src={getAvatarSrc(msg.avatarState)}
           alt="Xiaoxi"
@@ -146,8 +142,8 @@ function AiMessage({ msg, animate = false, streaming = false, onPlayVoice, isSpe
               type="button"
               onClick={() => onPlayVoice(fullText, msg.id)}
               disabled={isSpeaking}
-              title="听小希读这句"
-              aria-label="播放语音"
+              title={t('chat.playVoice')}
+              aria-label={t('chat.playVoiceAria')}
               style={{ background: 'none', border: 'none', cursor: isSpeaking ? 'default' : 'pointer', fontSize: '13px', padding: 0, opacity: isSpeaking ? 0.6 : 1 }}
             >
               {isSpeaking ? '🔊…' : '🔊'}
@@ -190,6 +186,7 @@ export default function ChatBox({
   speakingMessageId = null,
   characterSkin = 'xiaoxi',
 }) {
+  const t = useT();
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -269,16 +266,16 @@ export default function ChatBox({
     <div className="glass-panel chat-container">
       {/* Chat Box Header */}
       <div className="chat-header">
-        <span className="chat-title">💬 与 小希 甜蜜对话中</span>
+        <span className="chat-title">{t('chat.title')}</span>
         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          {isInteractionLocked ? '正在同步账号数据...' : (isSendingMessage ? '消息发送中...' : '(体力耗尽后，回复增加的速度会变慢哦)')}
+          {isInteractionLocked ? t('chat.syncing') : (isSendingMessage ? t('chat.sending') : t('chat.energyHint'))}
         </span>
       </div>
 
       {lastFailedMessage && (
         <div className="chat-retry-banner">
           <div className="chat-retry-copy">
-            <span className="chat-retry-label">上一条消息发送失败</span>
+            <span className="chat-retry-label">{t('chat.sendFailed')}</span>
             <span className="chat-retry-preview">{lastFailedMessage}</span>
           </div>
           <button
@@ -287,7 +284,7 @@ export default function ChatBox({
             onClick={retryLastFailedMessage}
             disabled={isComposerDisabled}
           >
-            {isSendingMessage ? '重试中...' : '重试发送'}
+            {isSendingMessage ? t('common.retrying') : t('chat.retrySend')}
           </button>
         </div>
       )}
@@ -342,7 +339,7 @@ export default function ChatBox({
 
       {/* Suggested Quick Prompts */}
       <div className="chat-suggested">
-        {QUICK_PROMPTS.map((prompt, idx) => (
+        {t('chat.quickPrompts').map((prompt, idx) => (
           <button
             key={idx}
             onClick={() => handleQuickPrompt(prompt)}
@@ -363,7 +360,7 @@ export default function ChatBox({
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={isComposerDisabled}
-          placeholder="说点甜言蜜语逗小希开心吧..."
+          placeholder={t('chat.placeholder')}
           className="chat-input"
         />
         {speechSupported && (
@@ -372,8 +369,8 @@ export default function ChatBox({
             onClick={toggleMic}
             disabled={isComposerDisabled}
             className="btn-secondary chat-mic-btn"
-            title={isListening ? '停止录音' : '语音输入（说话）'}
-            aria-label="语音输入"
+            title={isListening ? t('chat.micStop') : t('chat.micStart')}
+            aria-label={t('chat.micAria')}
             style={{ padding: '0 12px', fontSize: '16px' }}
           >
             {isListening ? '🔴' : '🎤'}
@@ -383,7 +380,7 @@ export default function ChatBox({
           onClick={handleSend}
           disabled={isComposerDisabled}
           className="btn-primary chat-send-btn"
-          title={isSendingMessage ? '消息发送中' : '发送消息'}
+          title={isSendingMessage ? t('chat.sendTitleSending') : t('chat.sendTitle')}
         >
           {isSendingMessage ? '⏳' : '🚀'}
         </button>

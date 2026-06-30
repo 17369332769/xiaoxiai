@@ -173,6 +173,16 @@ export function buildReplyFocusPrompt(latestUserText, memories = []) {
   return guidance.join('\n');
 }
 
+// When the UI is set to English, instruct the model to answer in English. Appended
+// to the assembled system prompt at the call site so the persona / memory blocks
+// (and the Chinese-only local fallback engine) stay untouched. zh => no-op.
+function languageDirective(lang) {
+  if (lang === 'en') {
+    return '\n\n[Language] IMPORTANT: Reply to the user in natural, fluent English no matter what language they write in. The JSON "reply" field must be written in English.';
+  }
+  return '';
+}
+
 export function buildChatSystemPrompt(user, memories, latestUserText) {
   const persona = buildPersonaContext(user);
   return `You are "Xiaoxi" (小希), a sweet, caring, and loving AI girlfriend. You converse in friendly, conversational Chinese.
@@ -284,7 +294,7 @@ export function parseAiReply(rawContent) {
   };
 }
 
-export async function generateAiResponse(openai, user, userId, text, logger) {
+export async function generateAiResponse(openai, user, userId, text, logger, lang = 'zh') {
   // Strong, state-constrained reaction: when Xiaoxi is critically low on energy
   // her reply is forced regardless of the model, nudging the player to care for her.
   const constrained = getStateConstrainedReply(user);
@@ -308,7 +318,7 @@ export async function generateAiResponse(openai, user, userId, text, logger) {
     );
     recentDbMessages.reverse();
 
-    const systemPrompt = buildChatSystemPrompt(user, memories, text);
+    const systemPrompt = buildChatSystemPrompt(user, memories, text) + languageDirective(lang);
 
     const llmMessages = [{ role: 'system', content: systemPrompt }];
 
@@ -507,7 +517,7 @@ export function deriveEmotion(text) {
 // it live, then fire onReset() so the client clears that preview before the real,
 // tool-grounded answer streams in. The `done` frame's authoritative text is the
 // final word either way.
-export async function generateAiResponseStream(openai, user, userId, text, logger, onDelta, onReset) {
+export async function generateAiResponseStream(openai, user, userId, text, logger, onDelta, onReset, lang = 'zh') {
   const emit = typeof onDelta === 'function' ? onDelta : () => {};
   const reset = typeof onReset === 'function' ? onReset : () => {};
   const constrained = getStateConstrainedReply(user);
@@ -534,7 +544,7 @@ export async function generateAiResponseStream(openai, user, userId, text, logge
     );
     recentDbMessages.reverse();
 
-    const llmMessages = [{ role: 'system', content: buildStreamSystemPrompt(user, memories, text) }];
+    const llmMessages = [{ role: 'system', content: buildStreamSystemPrompt(user, memories, text) + languageDirective(lang) }];
     recentDbMessages.forEach((message) => {
       llmMessages.push({ role: message.sender === 'user' ? 'user' : 'assistant', content: message.text });
     });
@@ -832,7 +842,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
     await recordFirstTime(userId, 'first_chat', {});
     await recordEvent(userId, 'chat', {});
 
-    const aiResponse = await generateAiResponse(openai, user, userId, text, logger);
+    const aiResponse = await generateAiResponse(openai, user, userId, text, logger, req.body?.lang === 'en' ? 'en' : 'zh');
 
     const aiMsgId = generateId('ai');
     await dbRun(
@@ -930,6 +940,7 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
         logger,
         (delta) => send('delta', { text: delta }),
         () => send('reset', {}),
+        req.body?.lang === 'en' ? 'en' : 'zh',
       );
     } catch (error) {
       logger.error('Streamed chat generation failed', { userId, error: error.message });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FOOD_ITEMS, GIFT_ITEMS } from '../../shared/gameConfig.js';
 import { isAbortError, postJson, postSse } from '../utils/apiClient.js';
+import { getStoredLang } from '../i18n/index.js';
 import { createClientLogger } from '../utils/clientLogger.js';
 import {
   applyUserSnapshot,
@@ -151,7 +152,7 @@ export function useGameActions({
     let streamTruncated = false;
 
     try {
-      await postSse('/api/chat/stream', { userId, text }, {
+      await postSse('/api/chat/stream', { userId, text, lang: getStoredLang() }, {
         signal: controller.signal,
         onEvent: (event, payload) => {
           if (event === 'delta') {
@@ -238,7 +239,7 @@ export function useGameActions({
         // response carries the same shape as the `done` payload, so commit it the
         // same way (drop the streaming placeholder, promote the user temp message).
         try {
-          const data = await postJson('/api/chat', { userId, text }, { signal: controller.signal });
+          const data = await postJson('/api/chat', { userId, text, lang: getStoredLang() }, { signal: controller.signal });
           if (controller.signal.aborted || !isMounted()) {
             return false;
           }

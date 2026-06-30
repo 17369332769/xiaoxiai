@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { createClientLogger } from '../utils/clientLogger';
+import { useLanguage } from '../i18n/index.js';
 
 const { useState, useRef } = React;
 const logger = createClientLogger('header');
@@ -14,6 +15,7 @@ export default function Header({
   retryLastFailedAction,
   notify,
 }) {
+  const { t, lang, setLang } = useLanguage();
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef(null);
   const hasShownAudioHintRef = useRef(false);
@@ -30,7 +32,7 @@ export default function Header({
       }).catch((error) => {
         logger.warn('Audio playback was blocked by the browser', { error });
         if (!hasShownAudioHintRef.current) {
-          notify?.('浏览器拦截了背景音乐播放，再点一次音符按钮通常就能开启。', 'info', '播放提示');
+          notify?.(t('header.musicBlocked'), 'info', t('header.musicBlockedTitle'));
           hasShownAudioHintRef.current = true;
         }
       });
@@ -53,16 +55,27 @@ export default function Header({
       </div>
 
       <div className="header-meta">
+        {/* Language toggle (中 / EN) */}
+        <button
+          type="button"
+          className="btn-secondary lang-toggle"
+          onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
+          title={t('header.langToggleTitle')}
+          style={{ padding: '6px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}
+        >
+          {lang === 'zh' ? 'EN' : '中'}
+        </button>
+
         {/* Dynamic Online Count */}
-        <div className="online-users" title="当前和小希共同约会的在线人数">
+        <div className="online-users" title={t('header.onlineTitle')}>
           <span className="online-dot"></span>
-          <span>在线: {onlineCount.toLocaleString()} 人</span>
+          <span>{t('header.online', { count: onlineCount.toLocaleString() })}</span>
         </div>
 
         {/* Coins Counter */}
-        <div className="coins-display" title="你的爱心币余额 (可用于购买礼物和食物)">
+        <div className="coins-display" title={t('header.coinsTitle')}>
           <span><span className="coin-icon"></span></span>
-          <span>{coins} 爱心币</span>
+          <span>{t('header.coins', { coins })}</span>
         </div>
 
         {/* Daily Check-in Button */}
@@ -86,7 +99,7 @@ export default function Header({
             }}
           >
             <span>📅</span>
-            <span>{isCheckInCompleted ? '已签到' : (isCheckInPending ? '签到中...' : '每日签到')}</span>
+            <span>{isCheckInCompleted ? t('header.checkedIn') : (isCheckInPending ? t('header.checkingIn') : t('header.dailyCheckin'))}</span>
           </button>
 
           {lastFailedAction?.kind === 'checkin' && (
@@ -96,7 +109,7 @@ export default function Header({
               onClick={retryLastFailedAction}
               disabled={isCheckInPending}
             >
-              {isCheckInPending ? '重试中...' : '重试签到'}
+              {isCheckInPending ? t('common.retrying') : t('header.retryCheckin')}
             </button>
           )}
         </div>
@@ -105,7 +118,7 @@ export default function Header({
         <button
           onClick={togglePlay}
           className="sound-toggle"
-          title={isPlaying ? "关闭背景音乐" : "播放甜美背景音乐"}
+          title={isPlaying ? t('header.musicOff') : t('header.musicOn')}
           style={{
             position: 'relative',
             overflow: 'visible'

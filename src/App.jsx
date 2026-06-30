@@ -14,10 +14,12 @@ import CelebrateEffect from './components/CelebrateEffect';
 import NotificationCenter from './components/NotificationCenter';
 import SyncStatusBanner from './components/SyncStatusBanner';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useT } from './i18n/index.js';
 
 function App() {
   const store = useGameStore();
   const isOnline = useOnlineStatus();
+  const t = useT();
 
   // Modal control states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -113,7 +115,7 @@ function App() {
             fontWeight: 600,
           }}
         >
-          📡 网络已断开，部分功能暂不可用，请检查你的网络连接。
+          {t('app.offline')}
         </div>
       )}
       {/* Fullscreen Celebration Canvas (Roses/Hearts/Stars Shower) */}

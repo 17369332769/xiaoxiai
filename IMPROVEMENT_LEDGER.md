@@ -413,6 +413,16 @@
 
 **剩余 Tier A（未做）**：Sentry/错误上报（需 DSN）。
 
-## 第26轮（i18n 中英文，规划中）
+## 第26轮（i18n 中英文 — 基建 + 核心外壳，scope=选项1）
 
-> 用户要求「添加 i18n 支持中英文」。XL（730+ 硬编码中文，36+ 组件）。待定 scope：UI chrome 国际化为主；是否同时切换小希 AI 回复语言 = 产品决策（需改系统提示词 + 本地兜底引擎仅中文）。
+> 用户「添加 i18n 支持中英文」，选项 1（UI 中英 + 小希回复跟随语言）。XL，本轮交付基建 + 高频外壳，长尾增量推进。
+
+**基建**：轻量自建——`src/i18n/index.js`（`LanguageContext` + `makeT/translate`：点号取键、`{var}` 插值、缺失回退 zh→key、数组原样返回、`getStoredLang/setStoredLang` 持久化 `xxa_lang`、默认 zh、`useT/useLanguage` hooks）+ `src/i18n/LanguageProvider.jsx`（单独成文件避开 `react-refresh/only-export-components`）+ `src/i18n/translations.js`（zh/en 词典，**zh 值与原文逐字一致**，故无 Provider 的组件单测仍渲染中文、全绿）。`main.jsx` 包 `LanguageProvider`。
+
+**已迁移外壳**：`Header`（含 **中/EN 语言切换按钮**）、`ActionMenu`（动作按钮 + 任务卡）、`ChatBox`（标题/状态/快捷语/输入框/麦克风/发送/头像/语音）、`App` 离线横幅。
+
+**小希 AI 回复跟随语言**：前端 `sendMessage` 随 `/api/chat(/stream)` body 带 `lang=getStoredLang()`；后端新增 `languageDirective(lang)`，在系统提示词末尾追加「用英文回复」指令（`generateAiResponse`/`Stream` 加 `lang='zh'` 参数，调用处传 `req.body.lang`）。**本地兜底引擎与剧情内容仍中文**（选项 1 既定边界）。
+
+**测试**：`src/i18n/i18n.test.jsx`（6 例：zh/en 翻译、插值、回退、数组、Provider 取持久化语言/默认中文）。`npm run verify` 全绿——前端 **100** / 后端 **206** / lint 干净 / build。
+
+**剩余（长尾，待续）**：Shop/Wallet/Auth/Memory/Theme/Story 等弹窗内文、`useGameStore`/`useGameActions` 的 notify 文案、shared `gameConfig` 的任务名/商品名、系统消息（喂食/送礼/签到等后端生成文案）。切到 EN 时这些暂仍中文。

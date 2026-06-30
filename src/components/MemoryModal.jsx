@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { humanizeMemoryKey } from '../../shared/memoryLabels.js';
+import { useT } from '../i18n/index.js';
 
 void React;
 
@@ -13,6 +14,7 @@ export default function MemoryModal({
   deleteMemory,
   clearMemories,
 }) {
+  const t = useT();
   if (!isOpen) return null;
 
   const hasMemories = memories.length > 0;
@@ -22,9 +24,7 @@ export default function MemoryModal({
       return;
     }
 
-    const confirmed = window.confirm(
-      '确定要清空小希记住的全部内容吗？此操作不可恢复，小希将忘记关于你的所有记忆。'
-    );
+    const confirmed = window.confirm(t('memory.confirmClear'));
     if (confirmed) {
       clearMemories();
     }
@@ -34,7 +34,7 @@ export default function MemoryModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
         <div className="modal-header">
-          <div className="modal-title"><span>📔</span><span>小希的记忆 (Memories)</span></div>
+          <div className="modal-title"><span>📔</span><span>{t('memory.title')}</span></div>
           <button className="close-btn" onClick={onClose}>&times;</button>
         </div>
 

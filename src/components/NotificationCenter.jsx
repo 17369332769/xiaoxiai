@@ -1,4 +1,7 @@
+import { useT } from '../i18n/index.js';
+
 export default function NotificationCenter({ notifications, dismissNotification }) {
+  const t = useT();
   if (!notifications.length) {
     return null;
   }
@@ -19,7 +22,7 @@ export default function NotificationCenter({ notifications, dismissNotification 
             type="button"
             className="notification-close"
             onClick={() => dismissNotification(notification.id)}
-            aria-label="关闭提示"
+            aria-label={t('notif.closeAria')}
           >
             ×
           </button>
