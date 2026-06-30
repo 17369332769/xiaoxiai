@@ -15,6 +15,12 @@ export async function parseApiResponse(response) {
     if (error.details && Number.isFinite(error.details.retryAfterMs)) {
       error.retryAfterMs = error.details.retryAfterMs;
     }
+    // Localized throttle copy with a concrete wait, so the UI shows
+    // "请在 N 秒后再试" instead of the server's generic English text.
+    if (code === 'RATE_LIMITED' && Number.isFinite(error.retryAfterMs)) {
+      const seconds = Math.max(1, Math.ceil(error.retryAfterMs / 1000));
+      error.message = `操作太频繁啦，请在 ${seconds} 秒后再试。`;
+    }
     throw error;
   }
 

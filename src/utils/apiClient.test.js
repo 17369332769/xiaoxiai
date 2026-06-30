@@ -59,12 +59,16 @@ describe('postJson', () => {
     expect(calls).toBe(1);
   });
 
-  test('surfaces retryAfterMs from a 429 envelope', async () => {
+  test('surfaces retryAfterMs from a 429 envelope and localizes the wait message', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => jsonResponse(
       { ok: false, error: { code: 'RATE_LIMITED', message: 'slow down', details: { retryAfterMs: 5000 } } },
       { ok: false, status: 429 },
     ));
-    await expect(postJson('/api/x', {})).rejects.toMatchObject({ status: 429, retryAfterMs: 5000 });
+    await expect(postJson('/api/x', {})).rejects.toMatchObject({
+      status: 429,
+      retryAfterMs: 5000,
+      message: '操作太频繁啦，请在 5 秒后再试。',
+    });
   });
 
   test('a caller abort propagates as an AbortError (silent cancel, not a timeout)', async () => {

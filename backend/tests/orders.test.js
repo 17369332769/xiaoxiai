@@ -102,3 +102,45 @@ test('refundOrder rejects an unpaid (pending) order and a missing order', async 
     (err) => err.code === 'ORDER_NOT_FOUND'
   );
 });
+
+test('manualSettleOrder settles a pending order once, and is idempotent / guarded', async () => {
+  await seedUser('ord_ms', 200);
+  const order = await orders.createOrder('ord_ms', { amount: 52, coins: 1200 }, 'wechat');
+
+  // 补单: operator credits a paid-out-of-band order whose callback was lost.
+  const first = await orders.manualSettleOrder(order.id);
+  assert.equal(first.settled, true);
+  assert.equal(first.coins, 1400);
+
+  // Replaying the manual settle is a no-op (already paid).
+  const again = await orders.manualSettleOrder(order.id);
+  assert.equal(again.settled, false);
+  assert.equal(again.alreadyPaid, true);
+
+  // A refunded order can't be revived.
+  await orders.refundOrder(order.id);
+  await assert.rejects(
+    () => orders.manualSettleOrder(order.id),
+    (err) => err.code === 'ORDER_NOT_SETTLEABLE'
+  );
+  await assert.rejects(
+    () => orders.manualSettleOrder('nope'),
+    (err) => err.code === 'ORDER_NOT_FOUND'
+  );
+});
+
+test('reconcileOrders summarizes counts + paid totals by status', async () => {
+  await seedUser('ord_rec', 200);
+  const paid1 = await orders.createOrder('ord_rec', { amount: 52, coins: 1200 }, 'wechat');
+  const paid2 = await orders.createOrder('ord_rec', { amount: 5, coins: 100 }, 'alipay');
+  await orders.createOrder('ord_rec', { amount: 30, coins: 600 }, 'wechat'); // stays pending
+  await orders.settleOrder(paid1.out_trade_no, 'R1');
+  await orders.settleOrder(paid2.out_trade_no, 'R2');
+
+  const report = await orders.reconcileOrders();
+  assert.ok(report.totalOrders >= 3);
+  assert.ok(report.byStatus.paid.count >= 2);
+  // paidAmount aggregates tier_amount of all paid orders in range (≥ 52 + 5).
+  assert.ok(report.paidAmount >= 57);
+  assert.equal(report.paidCount, report.byStatus.paid.count);
+});

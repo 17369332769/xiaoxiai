@@ -1,3 +1,7 @@
+import * as React from 'react';
+
+const { useState, useMemo } = React;
+
 const CATEGORY_META = {
   feed: { icon: '🍱', label: '喂食' },
   gift: { icon: '🎁', label: '送礼' },
@@ -6,6 +10,12 @@ const CATEGORY_META = {
   checkin: { icon: '📅', label: '签到奖励' },
   refund: { icon: '↩️', label: '打赏退款' },
 };
+
+const TXN_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'earn', label: '收入' },
+  { key: 'spend', label: '支出' },
+];
 
 function getCategoryMeta(category) {
   return CATEGORY_META[category] || { icon: '💰', label: '其他' };
@@ -25,6 +35,7 @@ export default function WalletModal({
   isOpen,
   onClose,
   coins,
+  ownedThemes = [],
   transactions = [],
   isLoadingTransactions = false,
   loadTransactions,
@@ -32,6 +43,26 @@ export default function WalletModal({
   isLoadingOrders = false,
   loadOrders,
 }) {
+  const [txnFilter, setTxnFilter] = useState('all');
+
+  // Asset overview + income/expense totals are derived from the loaded ledger
+  // (most recent slice), so label them as "近期". `useMemo` keeps the reduce off
+  // every keystroke-free re-render. Hooks run before the early return below.
+  const { recentEarned, recentSpent } = useMemo(() => {
+    let earned = 0;
+    let spent = 0;
+    for (const txn of transactions) {
+      if (txn.type === 'earn') earned += txn.amount;
+      else if (txn.type === 'spend') spent += txn.amount;
+    }
+    return { recentEarned: earned, recentSpent: spent };
+  }, [transactions]);
+
+  const visibleTransactions = useMemo(
+    () => (txnFilter === 'all' ? transactions : transactions.filter((t) => t.type === txnFilter)),
+    [transactions, txnFilter]
+  );
+
   if (!isOpen) return null;
 
   return (
@@ -47,14 +78,34 @@ export default function WalletModal({
         </div>
 
         {/* Current Balance */}
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '12px' }}>
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>当前钱包余额</div>
           <div className="gold-glow-text" style={{ color: 'var(--accent-gold)', fontWeight: 'bold', fontSize: '22px' }}>
             <span className="coin-icon"></span> {coins} 爱心币
           </div>
         </div>
 
-        {/* Refresh */}
+        {/* Asset overview */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          {[
+            { label: '拥有主题', value: `${ownedThemes.length} 款` },
+            { label: '近期获得', value: `+${recentEarned}`, color: '#4ade80' },
+            { label: '近期支出', value: `-${recentSpent}`, color: '#ff7597' },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="task-item"
+              style={{ flex: 1, textAlign: 'center', padding: '8px 6px' }}
+            >
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.label}</div>
+              <div style={{ fontWeight: 'bold', fontSize: '15px', marginTop: '2px', color: item.color || 'var(--text-main)' }}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Refresh + category filter */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
           <div className="section-title" style={{ fontSize: '13px', margin: 0 }}>📊 最近账单明细</div>
           <button
@@ -68,6 +119,20 @@ export default function WalletModal({
           </button>
         </div>
 
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+          {TXN_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              className={txnFilter === f.key ? 'btn-primary' : 'btn-secondary'}
+              onClick={() => setTxnFilter(f.key)}
+              style={{ padding: '3px 14px', fontSize: '12px' }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
         {/* Transaction List */}
         <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {isLoadingTransactions && transactions.length === 0 ? (
@@ -78,8 +143,12 @@ export default function WalletModal({
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '24px 0' }}>
               还没有任何爱心币流水，去聊天、做任务或送礼互动一下吧~
             </div>
+          ) : visibleTransactions.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '24px 0' }}>
+              当前筛选条件下没有记录。
+            </div>
           ) : (
-            transactions.map((txn) => {
+            visibleTransactions.map((txn) => {
               const meta = getCategoryMeta(txn.category);
               const isEarn = txn.type === 'earn';
 

@@ -90,3 +90,34 @@ test('a provider error falls back to the wordlist verdict (never fails open)', a
 
   safety.setModerationProvider(null);
 });
+
+test('countRecentSafetyEvents counts a user\'s recent blocks', async () => {
+  for (let i = 0; i < 3; i += 1) {
+    await safety.logSafetyEvent({ userId: 'counter', scope: 'chat_input', category: 'explicit', matched: '色情' });
+  }
+  assert.equal(await safety.countRecentSafetyEvents('counter'), 3);
+  assert.equal(await safety.countRecentSafetyEvents('nobody'), 0);
+  assert.equal(await safety.countRecentSafetyEvents(null), 0);
+});
+
+test('assessAbuse flags a repeat offender once prior blocks reach the threshold', async () => {
+  // Default threshold = 5: 4 priors → this hit is the 5th → flagged.
+  for (let i = 0; i < 4; i += 1) {
+    await safety.logSafetyEvent({ userId: 'abuser', scope: 'chat_input', category: 'illegal', matched: '贩毒' });
+  }
+  const hot = await safety.assessAbuse('abuser');
+  assert.equal(hot.flagged, true);
+  assert.equal(hot.recentCount, 5);
+  assert.equal(hot.action, 'flagged');
+
+  const cool = await safety.assessAbuse('first-timer');
+  assert.equal(cool.flagged, false);
+  assert.equal(cool.recentCount, 1);
+  assert.equal(cool.action, 'blocked');
+});
+
+test('classifyRiskTopic maps categories to topic + severity', () => {
+  assert.deepEqual(safety.classifyRiskTopic('selfharm'), { topic: 'self_harm', severity: 'critical' });
+  assert.deepEqual(safety.classifyRiskTopic('minor_protection'), { topic: 'minor_protection', severity: 'critical' });
+  assert.deepEqual(safety.classifyRiskTopic('unknown-cat'), { topic: 'other', severity: 'low' });
+});

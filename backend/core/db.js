@@ -365,6 +365,23 @@ async function initializeTables() {
     await dbRun('CREATE INDEX IF NOT EXISTS idx_safety_events_created ON content_safety_events(created_at)');
     await dbRun('CREATE INDEX IF NOT EXISTS idx_safety_events_category ON content_safety_events(category)');
 
+    // 15. Error Logs (server-side exception trail). The global error handler
+    // appends 5xx failures here so operators can review crashes/unhandled errors
+    // in the admin dashboard without shell access to the host. Append-only.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id TEXT PRIMARY KEY,
+        code TEXT,
+        status INTEGER,
+        message TEXT,
+        path TEXT,
+        method TEXT,
+        stack TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await dbRun('CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(created_at)');
+
     await runColumnMigrations();
 
     const relationshipEventColumns = [

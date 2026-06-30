@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useGameStore } from './hooks/useGameStore';
 import Header from './components/Header';
 import MainScreen from './components/MainScreen';
@@ -20,6 +20,17 @@ function App() {
   const store = useGameStore();
   const isOnline = useOnlineStatus();
   const t = useT();
+
+  // Auto-reconnect: when the network comes back (offline → online), re-sync
+  // automatically instead of making the user click "重新连接".
+  const { retrySync } = store;
+  const wasOfflineRef = useRef(false);
+  useEffect(() => {
+    if (isOnline && wasOfflineRef.current) {
+      retrySync();
+    }
+    wasOfflineRef.current = !isOnline;
+  }, [isOnline, retrySync]);
 
   // Modal control states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -242,6 +253,7 @@ function App() {
         isOpen={isWalletOpen}
         onClose={() => setIsWalletOpen(false)}
         coins={store.coins}
+        ownedThemes={store.ownedThemes}
         transactions={store.transactions}
         isLoadingTransactions={store.isLoadingTransactions}
         loadTransactions={store.loadTransactions}

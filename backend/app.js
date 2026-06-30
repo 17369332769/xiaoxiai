@@ -12,6 +12,7 @@ import { registerThemeRoutes } from './routes/themeRoutes.js';
 import { registerStoryRoutes } from './routes/storyRoutes.js';
 import { registerAdminRoutes } from './routes/adminRoutes.js';
 import { createPresenceTracker } from './services/presence.js';
+import { recordError } from './services/errorLog.js';
 import { createResolveUser } from './core/resolveUser.js';
 import { dbGet } from './core/db.js';
 
@@ -76,7 +77,7 @@ export function createApp({
   registerStoryRoutes(app, { resolveUser, presence });
   registerAdminRoutes(app, { adminToken, presence });
 
-  app.use(createErrorHandler(logger));
+  app.use(createErrorHandler(logger, recordError));
 
   return app;
 }

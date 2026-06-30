@@ -10,7 +10,7 @@
 // setModerationProvider() and composed in moderateText(); every block is recorded
 // to content_safety_events via logSafetyEvent() so operators can audit and tune.
 
-import { dbRun, dbAll } from '../core/db.js';
+import { dbRun, dbAll, dbGet } from '../core/db.js';
 import { createLogger } from '../core/logger.js';
 
 const logger = createLogger('content-safety');
@@ -143,4 +143,61 @@ export async function loadSafetyEvents(limit = 80) {
     logger.warn('Failed to load content-safety events', { error: error.message });
     return [];
   }
+}
+
+// ---- Abuse / high-frequency detection -------------------------------------
+// How many blocks within the window flips a user from a one-off slip to a
+// flagged repeat-offender. Operators tune via env; defaults to 5 blocks / 10 min.
+const ABUSE_WINDOW_MS = Number(process.env.SAFETY_ABUSE_WINDOW_MS) || 10 * 60 * 1000;
+const ABUSE_THRESHOLD = Number(process.env.SAFETY_ABUSE_THRESHOLD) || 5;
+
+export async function countRecentSafetyEvents(userId, withinMs = ABUSE_WINDOW_MS) {
+  if (!userId) return 0;
+  try {
+    // cutoffSeconds is a sanitized integer (Math.round of a number), so inlining
+    // it into the datetime modifier is injection-safe — and a bound parameter is
+    // NOT applied as a modifier by SQLite's datetime(), it must be literal text.
+    const cutoffSeconds = Math.max(1, Math.round(withinMs / 1000));
+    const row = await dbGet(
+      `SELECT COUNT(*) as c FROM content_safety_events
+       WHERE user_id = ? AND created_at >= datetime('now', '-${cutoffSeconds} seconds')`,
+      [userId]
+    );
+    return row ? row.c : 0;
+  } catch (error) {
+    logger.warn('Failed to count recent content-safety events', { error: error.message });
+    return 0;
+  }
+}
+
+// Decide whether THIS block makes the user a flagged repeat-offender. Counts the
+// user's prior blocks in the window (the current one is logged by the caller, so
+// reaching THRESHOLD-1 priors means this hit is the THRESHOLD-th). Returns the
+// audit action label + a firmer client message when flagged.
+export async function assessAbuse(userId) {
+  const priorCount = await countRecentSafetyEvents(userId);
+  const flagged = priorCount >= ABUSE_THRESHOLD - 1;
+  return {
+    flagged,
+    recentCount: priorCount + 1,
+    action: flagged ? 'flagged' : 'blocked',
+  };
+}
+
+// Map a wordlist/provider category to a coarse risk topic + severity so the
+// operator dashboard and any future escalation can reason about kind, not just
+// keyword. A thin, dependency-free classifier seam — swap in a model later.
+const RISK_TOPIC = {
+  violence: { topic: 'violence', severity: 'high' },
+  illegal: { topic: 'illegal', severity: 'high' },
+  selfharm: { topic: 'self_harm', severity: 'critical' },
+  minor_protection: { topic: 'minor_protection', severity: 'critical' },
+  explicit: { topic: 'sexual', severity: 'medium' },
+  risk: { topic: 'sensitive_topic', severity: 'medium' },
+  custom: { topic: 'custom', severity: 'medium' },
+  external: { topic: 'external', severity: 'high' },
+};
+
+export function classifyRiskTopic(category) {
+  return RISK_TOPIC[category] || { topic: 'other', severity: 'low' };
 }

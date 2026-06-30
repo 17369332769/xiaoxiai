@@ -61,7 +61,11 @@
       </div>
 
       <div class="panel">
-        <h2>🧾 最近订单（可退款）</h2>
+        <h2>🧾 最近订单（可退款 / 补单）</h2>
+        <div class="row">
+          <button class="ghost" onclick="reconcile()">生成对账（近30天）</button>
+          <span id="reconcileMsg" style="color:var(--muted);font-size:13px;"></span>
+        </div>
         <div class="scroll"><table id="ordersTbl"></table></div>
       </div>
 
@@ -78,6 +82,11 @@
       <div class="panel">
         <h2>🛡️ 内容安全拦截记录（用户输入拦截 / AI 回复替换）</h2>
         <div class="scroll"><table id="safetyTbl"></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>🐞 系统异常日志（5xx）</h2>
+        <div class="scroll"><table id="logsTbl"></table></div>
       </div>
 
       <div class="panel">
@@ -154,7 +163,7 @@
         document.getElementById('ordersTbl').innerHTML =
           '<tr><th>订单号</th><th>用户</th><th>金额</th><th>币</th><th>方式</th><th>状态</th><th>时间</th><th></th></tr>' +
           orders.map((o) => `<tr><td>${esc(o.outTradeNo)}</td><td>${esc(o.userId)}</td><td>¥${esc(o.amount)}</td><td>${esc(o.coins)}</td><td>${esc(o.paymentMethod)}</td><td>${esc(o.status)}</td><td>${esc(o.createdAt)}</td>` +
-            `<td>${o.status === 'paid' ? `<button class="ghost" onclick="refund('${esc(o.id)}')">退款</button>` : ''}</td></tr>`).join('');
+            `<td>${orderAction(o)}</td></tr>`).join('');
 
         const { users } = await api('/api/admin/users');
         document.getElementById('usersTbl').innerHTML =
@@ -172,6 +181,13 @@
           (safety.length
             ? safety.map((e) => `<tr><td>${esc(e.timestamp)}</td><td>${esc(e.userId)}</td><td>${esc(e.scope)}</td><td>${esc(e.category)}</td><td>${esc(e.matched)}</td><td>${esc(e.action)}</td><td>${esc(e.source)}</td></tr>`).join('')
             : '<tr><td colspan="7" style="color:var(--muted)">暂无拦截记录</td></tr>');
+
+        const { logs } = await api('/api/admin/logs');
+        document.getElementById('logsTbl').innerHTML =
+          '<tr><th>时间</th><th>状态</th><th>错误码</th><th>方法</th><th>路径</th><th>信息</th></tr>' +
+          (logs.length
+            ? logs.map((l) => `<tr><td>${esc(l.timestamp)}</td><td>${esc(l.status)}</td><td>${esc(l.code)}</td><td>${esc(l.method)}</td><td>${esc(l.path)}</td><td>${esc(l.message)}</td></tr>`).join('')
+            : '<tr><td colspan="6" style="color:var(--muted)">暂无异常日志 🎉</td></tr>');
 
         const { config } = await api('/api/admin/config');
         renderConfig(config);
@@ -229,6 +245,27 @@
       if (!confirm('确认对该订单退款？将扣回已发放的爱心币。')) return;
       await api('/api/admin/order/refund', { orderId });
       refreshAll();
+    }
+    function orderAction(o) {
+      if (o.status === 'paid') return `<button class="ghost" onclick="refund('${esc(o.id)}')">退款</button>`;
+      if (o.status === 'created' || o.status === 'pending') return `<button class="ghost" onclick="settle('${esc(o.id)}')">补单</button>`;
+      return '';
+    }
+    async function settle(orderId) {
+      if (!confirm('确认手动补单（标记为已支付并发放爱心币）？仅在确认用户已实际付款、但回调丢失时使用。')) return;
+      const { settled, alreadyPaid } = await api('/api/admin/order/settle', { orderId });
+      document.getElementById('reconcileMsg').textContent = settled ? '补单成功，已发放爱心币。' : (alreadyPaid ? '该订单此前已支付，无需补单。' : '订单状态不可补单。');
+      refreshAll();
+    }
+    async function reconcile() {
+      const msg = document.getElementById('reconcileMsg');
+      try {
+        const { report } = await api('/api/admin/orders/reconcile');
+        const parts = Object.entries(report.byStatus || {}).map(([k, v]) => `${k}:${v.count}笔/¥${v.amount}`);
+        msg.textContent = `近30天 共 ${report.totalOrders} 笔，已支付 ${report.paidCount} 笔 / ¥${report.paidAmount}。${parts.join('，')}`;
+      } catch (e) {
+        msg.textContent = '对账失败：' + e.message;
+      }
     }
 
     if (token) {

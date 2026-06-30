@@ -458,3 +458,19 @@
 **交付物**：`LAUNCH_CHECKLIST.md`（按 法律合规/基础设施/内容安全/业务闭环/质量 分组、标责任方的上线可勾选清单）；《需求分析文档.md》新增 §9 复核修正章节。
 
 **仍待外部资源（不在本轮范围）**：真实商户号与生产补单/对账、OTP 真实通道、实名+青少年模式、算法备案、隐私政策法务定稿、运营后台商品/任务 CRUD——详见 `LAUNCH_CHECKLIST.md`。
+
+## 第29轮（缺口补强四连：纯代码、不依赖外部资源）
+
+> 用户「全部做」。把上轮 `LAUNCH_CHECKLIST` 里纯代码、可独立完成的四类缺口一次补齐，逐项带测试，`npm run verify` 全绿（前端 101 / 后端 220 / build）。
+
+**① 内容安全风控进阶**（建立在第28轮 `content_safety_events` 之上）：`countRecentSafetyEvents(userId, window)`（按用户统计近窗口拦截次数，整数 modifier 内联进 `datetime('now',...)`——绑定参数不会被 SQLite 当 modifier 应用）；`assessAbuse(userId)`（priors 达阈值 `SAFETY_ABUSE_THRESHOLD`/`SAFETY_ABUSE_WINDOW_MS` 即标记 flagged，返回 action='flagged'）；`classifyRiskTopic(category)`（category→topic+severity 的无依赖分类 seam）。`/api/chat(/stream)` 拦截路径接入：flagged 用更强提示并以 `flagged` 落审计。**修了一个真 bug**：`contentSafety.js` 漏导入 `dbGet`（`countRecentSafetyEvents` 会抛 'dbGet is not defined'，单测先于线上抓到）。
+
+**② 前端正确性**：`App.jsx` 断网恢复（offline→online，用 `wasOfflineRef`）自动 `retrySync`；`apiClient.parseApiResponse` 对 `RATE_LIMITED` 本地化为「操作太频繁啦，请在 N 秒后再试」（由 `retryAfterMs` 推算）。签到/领奖重试经核已优雅处理（提示而非报错 + 原子守卫防重复发币），无需改后端。
+
+**③ 支付补单/对账 + 钱包**：`orders.js` 加 `manualSettleOrder`（运营手动补单，复用幂等 `settleOrder`，refunded/failed 拒绝）+ `reconcileOrders(from,to)`（按状态计数/金额，默认近30天，`COALESCE(?, date('now',...))` 兜底）；adminRoutes 加 `/api/admin/order/settle`、`/api/admin/orders/reconcile`，admin.html 加补单按钮+对账。`WalletModal` 加资产概览（拥有主题/近期获得/近期支出）+ 全部/收入/支出筛选（`App` 透传 `ownedThemes`）。
+
+**④ 运营后台异常日志**：新增 `error_logs` 表（db.js #15）+ `services/errorLog.js`（`recordError`/`loadErrorLogs`，best-effort）；`createErrorHandler(logger, onServerError)` 对 5xx 触发**注入式**持久化回调（保持 core 不依赖 services 的分层），detached 且吞错——日志失败绝不影响错误响应；`/api/admin/logs` + 后台"系统异常日志"面板。
+
+**测试**：`content-safety.test.js`(+4)、`orders.test.js`(+2)、新 `error-log.test.js`(3，含 5xx 落库 / 4xx 不落 / sink 抛错不破坏响应)、`apiClient.test.js`(429 文案断言)。
+
+**评估后降级（如实记录）**：运营后台**商品/任务增删**未做——前端 `ShopModal`/`useGameActions` 静态 import `shared/gameConfig.js` 的 `FOOD_ITEMS`/`GIFT_ITEMS`/任务目录，真正的增删需改成 DB 动态目录 + 前端拉取，属较大重构，留作独立任务（见 `LAUNCH_CHECKLIST.md` D）。

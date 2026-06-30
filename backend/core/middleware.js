@@ -56,7 +56,10 @@ export function applyCommonMiddleware(app, { allowedOrigin, rateLimitWindowMs, r
   app.use(createRateLimitMiddleware(rateLimitWindowMs, rateLimitMaxRequests));
 }
 
-export function createErrorHandler(logger) {
+// `onServerError` is an optional best-effort sink for 5xx failures (e.g. persist
+// to an error_logs table). It is injected by the composition root so this core
+// module never imports a service. It must not throw; we still fire-and-forget it.
+export function createErrorHandler(logger, onServerError = null) {
   return (error, req, res, next) => {
     if (res.headersSent) {
       next(error);
@@ -85,6 +88,21 @@ export function createErrorHandler(logger) {
       }
     } else if (status >= 500) {
       logger.error('Unhandled server error', { error });
+    }
+
+    // Persist 5xx failures for the operator dashboard. Best-effort and detached:
+    // a logging sink that rejects must never break the error response itself.
+    if (status >= 500 && typeof onServerError === 'function') {
+      Promise.resolve(
+        onServerError({
+          code,
+          status,
+          message,
+          path: req.originalUrl || req.url || '',
+          method: req.method || '',
+          stack: error?.stack || '',
+        })
+      ).catch(() => { /* never let logging mask the response */ });
     }
 
     // Standard Retry-After (seconds) for throttle responses so clients (and well-

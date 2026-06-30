@@ -4,8 +4,9 @@ import { asyncHandler, sendJson } from '../core/httpUtils.js';
 import { createRequireAdmin } from '../services/adminAuth.js';
 import { getStats, loadRecentEvents } from '../services/analytics.js';
 import { loadSafetyEvents } from '../services/contentSafety.js';
+import { loadErrorLogs } from '../services/errorLog.js';
 import { deactivateBroadcast, loadBroadcasts, pushBroadcast } from '../services/broadcasts.js';
-import { refundOrder, serializeOrder } from '../services/orders.js';
+import { manualSettleOrder, reconcileOrders, refundOrder, serializeOrder } from '../services/orders.js';
 import { loadAdminAudit, recordAdminAudit } from '../services/adminAudit.js';
 import { applyConfigOverrides, getConfigSnapshot } from '../services/configOverrides.js';
 
@@ -66,6 +67,14 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
     sendJson(res, { events });
   }));
 
+  // Server-side exception trail (5xx): lets operators review crashes without
+  // shell access to the host.
+  app.post('/api/admin/logs', asyncHandler(async (req, res) => {
+    const limit = clampLimit(req.body?.limit, 80, 300);
+    const logs = await loadErrorLogs(limit);
+    sendJson(res, { logs });
+  }));
+
   app.post('/api/admin/broadcasts', asyncHandler(async (req, res) => {
     const broadcasts = await loadBroadcasts(50);
     sendJson(res, { broadcasts });
@@ -105,6 +114,31 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
       });
     }
     sendJson(res, { refunded: result.refunded, order: serializeOrder(result.order) });
+  }));
+
+  // Manual settlement (补单): operator confirms an order was paid out-of-band
+  // (lost gateway callback) and credits it via the idempotent settle path.
+  app.post('/api/admin/order/settle', asyncHandler(async (req, res) => {
+    const orderId = typeof req.body?.orderId === 'string' ? req.body.orderId : '';
+    if (!orderId) throw new AppError(400, 'INVALID_PARAMETER', 'orderId is required');
+    const result = await manualSettleOrder(orderId, `manual-admin-${Date.now()}`);
+    if (result.settled) {
+      await recordAdminAudit('order_manual_settle', {
+        targetType: 'order',
+        targetId: orderId,
+        detail: { coins: result.order?.coins },
+        ip: req.ip,
+      });
+    }
+    sendJson(res, { settled: result.settled, alreadyPaid: result.alreadyPaid, order: serializeOrder(result.order) });
+  }));
+
+  // Reconciliation report over a created_at date range (defaults to last 30 days).
+  app.post('/api/admin/orders/reconcile', asyncHandler(async (req, res) => {
+    const from = typeof req.body?.from === 'string' && req.body.from ? req.body.from : null;
+    const to = typeof req.body?.to === 'string' && req.body.to ? req.body.to : null;
+    const report = await reconcileOrders(from, to);
+    sendJson(res, { report });
   }));
 
   app.post('/api/admin/audit', asyncHandler(async (req, res) => {

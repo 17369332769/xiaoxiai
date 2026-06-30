@@ -141,6 +141,50 @@ export async function refundOrder(orderId) {
   return { refunded: true, coins: newCoins, order: await getOrder(orderId) };
 }
 
+// Operator-triggered manual settlement (补单) for an order confirmed paid
+// out-of-band — e.g. the gateway callback was lost (network blip). Reuses the
+// idempotent settleOrder path, so racing a late real callback is safe (the
+// second caller is a no-op). A refunded/failed order can't be revived.
+export async function manualSettleOrder(orderId, gatewayTxnId) {
+  const order = await getOrder(orderId);
+  if (!order) {
+    throw new AppError(404, 'ORDER_NOT_FOUND', 'Order not found');
+  }
+  if (order.status === 'refunded' || order.status === 'failed') {
+    throw new AppError(400, 'ORDER_NOT_SETTLEABLE', `Order in status '${order.status}' cannot be settled`);
+  }
+  return settleOrder(order.out_trade_no, gatewayTxnId || `manual-${Date.now()}`);
+}
+
+// Reconciliation summary over a created_at date range (inclusive, local time).
+// Both bounds default to the last 30 days. Returns per-status counts + amounts
+// plus paid totals so operators can tie out gateway settlements against orders.
+export async function reconcileOrders(fromDate = null, toDate = null) {
+  const rows = await dbAll(
+    `SELECT status, COUNT(*) as count, COALESCE(SUM(tier_amount), 0) as amount
+       FROM orders
+      WHERE date(created_at, 'localtime') >= COALESCE(?, date('now', 'localtime', '-30 days'))
+        AND date(created_at, 'localtime') <= COALESCE(?, date('now', 'localtime'))
+      GROUP BY status`,
+    [fromDate, toDate]
+  );
+
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const byStatus = {};
+  let totalOrders = 0;
+  let paidCount = 0;
+  let paidAmount = 0;
+  for (const row of rows) {
+    byStatus[row.status] = { count: row.count, amount: round2(row.amount) };
+    totalOrders += row.count;
+    if (row.status === 'paid') {
+      paidCount += row.count;
+      paidAmount += row.amount;
+    }
+  }
+  return { from: fromDate, to: toDate, totalOrders, paidCount, paidAmount: round2(paidAmount), byStatus };
+}
+
 export function serializeOrder(order) {
   if (!order) return null;
   return {
