@@ -16,6 +16,11 @@ export function useGameActions({
   userId,
   coins,
   tasks,
+  // Live shop catalog from the store (DB-backed). Defaults to the bundled static
+  // config so new dynamic items are purchasable while existing callers/tests that
+  // omit these still validate against the same baseline.
+  foodItems = FOOD_ITEMS,
+  giftItems = GIFT_ITEMS,
   isSyncing,
   hasCheckedInToday,
   notify,
@@ -315,7 +320,7 @@ export function useGameActions({
   }, [lastFailedMessage, isSendingMessage, isSyncing, sendMessage]);
 
   const feedXiaoxi = useCallback(async (foodId) => {
-    const food = FOOD_ITEMS.find((item) => item.id === foodId);
+    const food = foodItems.find((item) => item.id === foodId);
     if (!food || !userId || isSyncing) {
       return false;
     }
@@ -387,10 +392,11 @@ export function useGameActions({
     releaseTrackedRequestController,
     endPurchase,
     resetFailureState,
+    foodItems,
   ]);
 
   const giftXiaoxi = useCallback(async (giftId) => {
-    const gift = GIFT_ITEMS.find((item) => item.id === giftId);
+    const gift = giftItems.find((item) => item.id === giftId);
     if (!gift || !userId || isSyncing) {
       return false;
     }
@@ -465,6 +471,7 @@ export function useGameActions({
     releaseTrackedRequestController,
     endPurchase,
     resetFailureState,
+    giftItems,
   ]);
 
   const claimTaskReward = useCallback(async (taskId) => {

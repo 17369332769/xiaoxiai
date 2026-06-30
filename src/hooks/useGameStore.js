@@ -69,6 +69,10 @@ export function useGameStore() {
   const [equippedTheme, setEquippedTheme] = useState(DEFAULT_THEME_ID);
   // Story state: which 剧情 episodes the user has finished reading.
   const [readStories, setReadStories] = useState([]);
+  // Live shop catalog (food/gifts/tipping tiers). Defaults to the bundled static
+  // config for first paint / offline, then overlaid by the server's effective
+  // (operator-edited) catalog on each sync.
+  const [catalog, setCatalog] = useState({ food: FOOD_ITEMS, gifts: GIFT_ITEMS, tippingTiers: TIPPING_TIERS });
   // Which AI message is currently being voiced (TTS), so its 🔊 button can show
   // a playing state. null when nothing is speaking.
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
@@ -141,6 +145,8 @@ export function useGameStore() {
     userId,
     coins,
     tasks,
+    foodItems: catalog.food,
+    giftItems: catalog.gifts,
     isSyncing,
     hasCheckedInToday,
     notify,
@@ -199,6 +205,13 @@ export function useGameStore() {
         }
         if (data.stories) {
           setReadStories(Array.isArray(data.stories.read) ? data.stories.read : []);
+        }
+        if (data.catalog) {
+          setCatalog({
+            food: Array.isArray(data.catalog.food) && data.catalog.food.length ? data.catalog.food : FOOD_ITEMS,
+            gifts: Array.isArray(data.catalog.gifts) && data.catalog.gifts.length ? data.catalog.gifts : GIFT_ITEMS,
+            tippingTiers: Array.isArray(data.catalog.tippingTiers) && data.catalog.tippingTiers.length ? data.catalog.tippingTiers : TIPPING_TIERS,
+          });
         }
         applyRelationshipProfile(data.relationship);
         resetFailureState();
@@ -762,9 +775,9 @@ export function useGameStore() {
     hasFreshRelationshipUpdate,
     showCelebration,
     celebrationType,
-    FOOD_ITEMS,
-    GIFT_ITEMS,
-    TIPPING_TIERS,
+    FOOD_ITEMS: catalog.food,
+    GIFT_ITEMS: catalog.gifts,
+    TIPPING_TIERS: catalog.tippingTiers,
     THEMES,
     STORIES,
     sendMessage,

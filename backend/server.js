@@ -7,6 +7,7 @@ import { dbReady } from './core/db.js';
 import { ensureSeedBroadcast } from './services/broadcasts.js';
 import { startBackupSchedule } from './services/backup.js';
 import { loadConfigOverrides } from './services/configOverrides.js';
+import { seedCatalog, loadCatalog } from './services/catalog.js';
 
 // Load environment variables
 dotenv.config();
@@ -88,6 +89,11 @@ dbReady.then(async () => {
   // failure can't leave an unhandled rejection or skip the others.
   await ensureSeedBroadcast().catch((error) => logger.warn('Failed to seed default broadcast', { error: error.message }));
   startBackupSchedule();
+  // Seed + load the dynamic catalog BEFORE config overrides (overrides apply on
+  // top of the catalog base). Both best-effort; on failure the catalog falls back
+  // to the in-memory static defaults so the shop never goes dark.
+  await seedCatalog().catch((error) => logger.warn('Failed to seed catalog', { error: error.message }));
+  await loadCatalog().catch((error) => logger.warn('Failed to load catalog', { error: error.message }));
   await loadConfigOverrides().catch((error) => logger.warn('Failed to load config overrides', { error: error.message }));
 }).catch((error) => {
   logger.warn('Post-startup init failed', { error: error.message });

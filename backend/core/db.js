@@ -382,6 +382,52 @@ async function initializeTables() {
     `);
     await dbRun('CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(created_at)');
 
+    // 16. Dynamic gameplay catalog (operator-editable shop items + task templates).
+    // Seeded from shared/gameConfig defaults on startup (INSERT OR IGNORE), then
+    // fully CRUD-able from the admin console — so operators can add / remove / edit
+    // food, gifts and tasks at runtime without a redeploy. `sort_order` controls
+    // display order; a row's absence (or is_active=0) removes it from the catalog.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS food_catalog (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        cost INTEGER,
+        energy INTEGER,
+        affection INTEGER,
+        icon TEXT,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS gift_catalog (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        cost INTEGER,
+        mood INTEGER,
+        affection INTEGER,
+        icon TEXT,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS task_catalog (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        target INTEGER,
+        reward INTEGER,
+        category TEXT DEFAULT 'daily',
+        sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     await runColumnMigrations();
 
     const relationshipEventColumns = [

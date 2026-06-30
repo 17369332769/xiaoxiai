@@ -9,6 +9,7 @@ import { deactivateBroadcast, loadBroadcasts, pushBroadcast } from '../services/
 import { manualSettleOrder, reconcileOrders, refundOrder, serializeOrder } from '../services/orders.js';
 import { loadAdminAudit, recordAdminAudit } from '../services/adminAudit.js';
 import { applyConfigOverrides, getConfigSnapshot } from '../services/configOverrides.js';
+import { upsertCatalogItem, deleteCatalogItem } from '../services/catalog.js';
 
 function clampLimit(value, fallback, max) {
   const n = parseInt(value, 10);
@@ -167,5 +168,26 @@ export function registerAdminRoutes(app, { adminToken, presence }) {
       ip: req.ip || null,
     });
     sendJson(res, { config: getConfigSnapshot(), applied });
+  }));
+
+  // Dynamic catalog CRUD: add / edit (upsert) and delete shop items + tasks.
+  // kind ∈ {food, gift, task}. Returns the refreshed config snapshot.
+  app.post('/api/admin/catalog/upsert', asyncHandler(async (req, res) => {
+    const kind = typeof req.body?.kind === 'string' ? req.body.kind : '';
+    const item = req.body?.item;
+    if (!item || typeof item !== 'object') throw new AppError(400, 'INVALID_PARAMETER', 'item is required');
+    await upsertCatalogItem(kind, item);
+    await recordAdminAudit('catalog_upsert', { targetType: kind, targetId: String(item.id || ''), detail: { item }, ip: req.ip });
+    sendJson(res, { config: getConfigSnapshot() });
+  }));
+
+  app.post('/api/admin/catalog/delete', asyncHandler(async (req, res) => {
+    const kind = typeof req.body?.kind === 'string' ? req.body.kind : '';
+    const id = typeof req.body?.id === 'string' ? req.body.id : '';
+    const removed = await deleteCatalogItem(kind, id);
+    if (removed) {
+      await recordAdminAudit('catalog_delete', { targetType: kind, targetId: id, ip: req.ip });
+    }
+    sendJson(res, { removed, config: getConfigSnapshot() });
   }));
 }

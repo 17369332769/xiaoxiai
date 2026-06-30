@@ -473,4 +473,19 @@
 
 **测试**：`content-safety.test.js`(+4)、`orders.test.js`(+2)、新 `error-log.test.js`(3，含 5xx 落库 / 4xx 不落 / sink 抛错不破坏响应)、`apiClient.test.js`(429 文案断言)。
 
-**评估后降级（如实记录）**：运营后台**商品/任务增删**未做——前端 `ShopModal`/`useGameActions` 静态 import `shared/gameConfig.js` 的 `FOOD_ITEMS`/`GIFT_ITEMS`/任务目录，真正的增删需改成 DB 动态目录 + 前端拉取，属较大重构，留作独立任务（见 `LAUNCH_CHECKLIST.md` D）。
+**评估后降级（如实记录）**：运营后台**商品/任务增删**未做——前端 `ShopModal`/`useGameActions` 静态 import `shared/gameConfig.js` 的 `FOOD_ITEMS`/`GIFT_ITEMS`/任务目录，真正的增删需改成 DB 动态目录 + 前端拉取，属较大重构，留作独立任务（见 `LAUNCH_CHECKLIST.md` D）。→ **已在第30轮完成。**
+
+## 第30轮（商品/任务动态目录 DB-backed CRUD — 即上轮降级项）
+
+> 用户「可以（做动态目录重构）」。把上轮降级的"商品/任务增删"补上，最小破坏式：**静态默认作 seed、DB 为运行时真源、前端经 sync 拉取**。`npm run verify` 全绿（前端 101 / 后端 226 / build）。
+
+**关键设计（低破坏面）**：勘查发现后端所有商品/任务读取都已收口到 `configOverrides` 的 `getEffectiveFood/Gifts/Tasks`，于是只把这三者的**基准来源从静态 import 换成新的 `catalog` 服务**，业务代码与覆盖层（`config_overrides`）保持不变。`catalog.js` 的内存列表**同步默认为静态 seed**，因此任何未调用 `loadCatalog()` 的代码路径（含所有未启动 `server.js` seed 步骤的测试）行为与旧静态配置**完全一致**——这是 220→226 全绿不破的根本原因。
+
+- **DB**：新增 `food_catalog`/`gift_catalog`/`task_catalog`（db.js #16）。`catalog.js`：`seedCatalog`（INSERT OR IGNORE 静态默认，幂等非破坏）/`loadCatalog`（读 active 行覆盖内存列表，空表则保留默认）/getters/`upsertCatalogItem`/`deleteCatalogItem`（带 id 格式与数值校验）。
+- **configOverrides**：`baseFood/Gift/Task` 由静态 Map 改为按调用从 `catalog` 取（tipping tiers 仍静态）；覆盖层不变（编辑价格两条路径：目录改基准 / override 仍优先）。
+- **boot**：`server.js` 在 `loadConfigOverrides` 前先 `seedCatalog`+`loadCatalog`（均 best-effort，失败回退内存默认）。
+- **admin**：`/api/admin/catalog/upsert`、`/catalog/delete`（审计）；admin.html 新增「目录管理」面板（增删改三类 + 列表删除）。
+- **前端**：`/api/user/sync` 新增 `catalog` 字段（effective、含 override）；`useGameStore` 持 `catalog` 状态（默认静态、sync 覆盖），返回的 `FOOD_ITEMS/GIFT_ITEMS/TIPPING_TIERS` 改为动态值；`useGameActions` 接受 `foodItems/giftItems` 参数（默认静态，故其单测不传也走静态基准而仍绿），新增动态商品因此可购买。
+- **测试**：新 `catalog.test.js`(6：seed/load、新增流经 getEffectiveFood、改价、删除、新任务流经 getEffectiveTasks、非法校验)。
+
+**已知后续打磨（如实记录）**：删除任务后**老用户 `tasks` 表历史行不自动清除**（新用户不再获得）；新增**每日**任务的自动重置仍按 `backend/config/gameConfig.js` 的静态 `DAILY_TASK_IDS`（动态每日任务暂不自动重置）。`multiend/` 端仍用静态目录（独立构建、不在 web 发布门禁内，按需另做）。

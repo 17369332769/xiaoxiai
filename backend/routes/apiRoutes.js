@@ -808,6 +808,13 @@ export function registerApiRoutes(app, { openai, logger, presence, resolveUser, 
       requireRegistrationOtp: REQUIRE_REGISTRATION_OTP,
       themes: themeState,
       stories: storyState,
+      // Effective shop catalog (DB-backed, operator-edited, overrides applied) so
+      // the client renders the live item set rather than a static bundle.
+      catalog: {
+        food: Object.values(getEffectiveFood()),
+        gifts: Object.values(getEffectiveGifts()),
+        tippingTiers: Object.values(getEffectiveTippingTiers()),
+      },
     });
   }));
 

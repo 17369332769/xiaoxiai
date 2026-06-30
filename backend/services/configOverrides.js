@@ -1,12 +1,8 @@
 import { dbAll, dbRun } from '../core/db.js';
 import { AppError } from '../core/appError.js';
 import { createLogger } from '../core/logger.js';
-import {
-  FOOD_ITEMS as FOOD_LIST,
-  GIFT_ITEMS as GIFT_LIST,
-  TIPPING_TIERS as TIP_LIST,
-} from '../../shared/gameConfig.js';
-import { DAILY_TASKS, GROWTH_TASKS, DEFAULT_TASKS } from '../config/gameConfig.js';
+import { TIPPING_TIERS as TIP_LIST } from '../../shared/gameConfig.js';
+import { getFoodList, getGiftList, getTaskList, getDailyTasks, getGrowthTasks } from './catalog.js';
 
 const logger = createLogger('config-overrides');
 
@@ -21,10 +17,13 @@ const logger = createLogger('config-overrides');
 // cache is loaded once at startup and refreshed on every admin write.
 const VALUE_MAX = 1_000_000;
 
-const baseFood = new Map(FOOD_LIST.map((i) => [String(i.id), i]));
-const baseGift = new Map(GIFT_LIST.map((i) => [String(i.id), i]));
+// Food / gift / task bases now come from the dynamic catalog (DB-backed, seeded
+// from the static defaults), rebuilt per call so operator CRUD flows through.
+// Tipping tiers stay static (tied to fixed payment amounts, not shop content).
+const foodMap = () => new Map(getFoodList().map((i) => [String(i.id), i]));
+const giftMap = () => new Map(getGiftList().map((i) => [String(i.id), i]));
+const taskMap = () => new Map(getTaskList().map((t) => [String(t.id), t]));
 const baseTip = new Map(TIP_LIST.map((t) => [String(t.amount), t]));
-const baseTask = new Map(DEFAULT_TASKS.map((t) => [String(t.id), t]));
 
 // key -> integer value
 let cache = new Map();
@@ -36,10 +35,10 @@ function parseOverrideKey(key) {
     throw new AppError(400, 'INVALID_OVERRIDE_KEY', `无法识别的配置项：${key}`);
   }
   const [section, id, field] = parts;
-  if (section === 'food' && field === 'cost' && baseFood.has(id)) return { section, id, field };
-  if (section === 'gift' && field === 'cost' && baseGift.has(id)) return { section, id, field };
+  if (section === 'food' && field === 'cost' && foodMap().has(id)) return { section, id, field };
+  if (section === 'gift' && field === 'cost' && giftMap().has(id)) return { section, id, field };
   if (section === 'tippingTier' && field === 'coins' && baseTip.has(id)) return { section, id, field };
-  if (section === 'task' && field === 'reward' && baseTask.has(id)) return { section, id, field };
+  if (section === 'task' && field === 'reward' && taskMap().has(id)) return { section, id, field };
   throw new AppError(400, 'INVALID_OVERRIDE_KEY', `不支持或不存在的配置项：${key}`);
 }
 
@@ -81,11 +80,11 @@ function effectiveRecord(baseMap, section, field) {
 }
 
 export function getEffectiveFood() {
-  return effectiveRecord(baseFood, 'food', 'cost');
+  return effectiveRecord(foodMap(), 'food', 'cost');
 }
 
 export function getEffectiveGifts() {
-  return effectiveRecord(baseGift, 'gift', 'cost');
+  return effectiveRecord(giftMap(), 'gift', 'cost');
 }
 
 export function getEffectiveTippingTiers() {
@@ -104,7 +103,7 @@ function applyTaskRewards(list) {
 // so an operator's reward change takes effect on each user's next sync — the
 // seed upsert refreshes the stored reward — mirroring the shop-price overrides.
 export function getEffectiveTasks() {
-  return applyTaskRewards(DEFAULT_TASKS);
+  return applyTaskRewards(getTaskList());
 }
 
 // Full snapshot for the admin console, with all operator overrides applied.
@@ -113,8 +112,8 @@ export function getConfigSnapshot() {
     food: Object.values(getEffectiveFood()),
     gifts: Object.values(getEffectiveGifts()),
     tippingTiers: Object.values(getEffectiveTippingTiers()),
-    dailyTasks: applyTaskRewards(DAILY_TASKS),
-    growthTasks: applyTaskRewards(GROWTH_TASKS),
+    dailyTasks: applyTaskRewards(getDailyTasks()),
+    growthTasks: applyTaskRewards(getGrowthTasks()),
   };
 }
 
