@@ -426,3 +426,19 @@
 **测试**：`src/i18n/i18n.test.jsx`（6 例：zh/en 翻译、插值、回退、数组、Provider 取持久化语言/默认中文）。`npm run verify` 全绿——前端 **100** / 后端 **206** / lint 干净 / build。
 
 **剩余（长尾，待续）**：Shop/Wallet/Auth/Memory/Theme/Story 等弹窗内文、`useGameStore`/`useGameActions` 的 notify 文案、shared `gameConfig` 的任务名/商品名、系统消息（喂食/送礼/签到等后端生成文案）。切到 EN 时这些暂仍中文。
+
+## 第27轮（多端改造 — Taro 4，一套代码发 H5/小程序/App）
+
+> 用户「将技术栈迁移，适配多端（H5/小程序/App）」。推荐并采用 **Taro 4**（唯一保留 React 投资又能编进小程序的多端框架）。**非破坏式**：新建 `multiend/` 并行工程，不动 `src/`（Web 版）与 `backend/`，**复用** `shared/` 与同一后端。
+
+**工程/工具链**：`multiend/`（Taro 4.2.0，**webpack5 编译器**——绕开 Vite rolldown 在旧 glibc 沙箱的原生绑定坑，React 18.3）。`config/index.js` 用 `alias @shared → ../../shared` 复用业务目录。坑：`npm install` 不会自动装 `babel-preset-taro` 的 peer 预设，需补 `@babel/preset-react|env|typescript`。
+
+**跨端适配层（核心工程）** `src/adapters/`：① `storage`（`Taro.*StorageSync` ← `localStorage`）；② `audio`（`createInnerAudioContext` ← `new Audio()` TTS）；③ `request`（`Taro.request` ← `fetch`；**SSE 流式聊天按端分支**：H5 `fetch` 流 / 小程序 `enableChunked`，忠实移植 `apiClient.js` 的信封解析+超时+重试+鉴权）。
+
+**逻辑层移植**（双端编译通过）：`useGameStore`(837) + `useGameActions`(821) + `useRelationshipMemory/useNotifications/useTrackedAsync` + `i18n` + `utils` 复制+外科手术式改动——`apiClient→adapter`、`../../shared→@shared`、`localStorage→storage`、`new Audio→createAudio`；`AbortController→自带 shim`（小程序无）、`window/navigator→Taro.onNetworkStatusChange`、`import.meta.env→process.env`。
+
+**UI 层移植**：13 个组件（Header/MainScreen/ChatBox/ActionMenu/ShopModal/WalletModal/AuthModal/MemoryModal/ThemeModal/StoryModal/CelebrateEffect/NotificationCenter/SyncStatusBanner）+ App 编排页。机械映射 `div→View`、`span→Text`、`button→View+onClick`、`img→Image`、`input(onChange/e.target.value)→Input(onInput/e.detail.value)`、`回车 onKeyDown→Input onConfirm`、`window.confirm→Taro.showModal`、`<canvas>撒花→跨端 emoji/Text 撒花`、`<audio>背景乐→createInnerAudioContext`。全局样式由 `index.css` 移植（剔除 weapp 非法的远程字体 `@import`，补 `page` 背景）。
+
+**实测结果**：H5 ✅ + 微信小程序 ✅ + 支付宝小程序 ✅ 三端**同一份代码**构建通过；后端契约冒烟 `/api/user/sync → 200 {ok:true,user,chatHistory}` 正是 request 适配器期望的信封。主仓库 `eslint .` 加 `globalIgnores(['dist','multiend'])` 后仍绿（multiend 自带工具链/约定，不进 Web 发布门禁）。
+
+**待办**：小程序端 CSS 视觉微调（grid/fixed/var()/伪元素差异，见各组件 residualRisks）；App(RN) 需真机/原生环境出包（适配器已就绪）；其余小程序端（抖音/百度/QQ）按需 `--type` 开启；`downloadJson` 导出在小程序需换 Taro 文件 API。**上线阻断项**：AI 情感陪伴类目在微信/抖音/支付宝小程序审核极严，需先核对类目政策；后端须 HTTPS+备案域名+request 合法域名白名单。

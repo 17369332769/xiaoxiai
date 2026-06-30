@@ -1,0 +1,12 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "xiaoxiai-multiend",
+  "description": "小希 AI 多端版",
+  "appid": "touristappid",
+  "setting": {
+    "es6": false,
+    "minified": false,
+    "postcss": false
+  },
+  "compileType": "miniprogram"
+}

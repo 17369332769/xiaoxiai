@@ -1,0 +1,51 @@
+{
+  "name": "xiaoxiai-multiend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "小希 AI 多端版 (Taro 4: H5 / 微信小程序 / App)",
+  "templateInfo": {
+    "name": "default",
+    "typescript": false,
+    "css": "none",
+    "framework": "react"
+  },
+  "scripts": {
+    "build:weapp": "taro build --type weapp",
+    "build:h5": "taro build --type h5",
+    "dev:weapp": "taro build --type weapp --watch",
+    "dev:h5": "taro build --type h5 --watch",
+    "preview:h5": "node serve.cjs"
+  },
+  "browserslist": [
+    "defaults and fully supports es6-module",
+    "maintained node versions"
+  ],
+  "dependencies": {
+    "@babel/runtime": "^7.24.0",
+    "@tarojs/components": "4.2.0",
+    "@tarojs/helper": "4.2.0",
+    "@tarojs/plugin-framework-react": "4.2.0",
+    "@tarojs/plugin-platform-h5": "4.2.0",
+    "@tarojs/plugin-platform-weapp": "4.2.0",
+    "@tarojs/react": "4.2.0",
+    "@tarojs/router": "4.2.0",
+    "@tarojs/runtime": "4.2.0",
+    "@tarojs/shared": "4.2.0",
+    "@tarojs/taro": "4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.29.7",
+    "@babel/preset-react": "^7.29.7",
+    "@babel/preset-typescript": "^7.29.7",
+    "@pmmmwh/react-refresh-webpack-plugin": "^0.5.17",
+    "@tarojs/cli": "4.2.0",
+    "@tarojs/plugin-platform-alipay": "^4.2.0",
+    "@tarojs/webpack5-runner": "4.2.0",
+    "babel-preset-taro": "4.2.0",
+    "react-refresh": "^0.14.0",
+    "webpack": "^5.91.0"
+  }
+}
