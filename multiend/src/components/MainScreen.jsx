@@ -1,20 +1,6 @@
 import * as React from 'react';
 import { View, Text, Image } from '@tarojs/components';
-
-// 小希 立绘
-import xiaoxiNormal from '../assets/characters/xiaoxi/normal.jpg';
-import xiaoxiHappy from '../assets/characters/xiaoxi/happy.jpg';
-import xiaoxiBlush from '../assets/characters/xiaoxi/blush.jpg';
-
-// 小雅 立绘
-import xiaoyaNormal from '../assets/characters/xiaoya/normal.png';
-import xiaoyaHappy from '../assets/characters/xiaoya/happy.png';
-import xiaoyaBlush from '../assets/characters/xiaoya/blush.png';
-
-const CHARACTER_ASSETS = {
-  xiaoxi: { normal: xiaoxiNormal, happy: xiaoxiHappy, blush: xiaoxiBlush },
-  xiaoya: { normal: xiaoyaNormal, happy: xiaoyaHappy, blush: xiaoyaBlush },
-};
+import { CHARACTER_ASSETS } from '../utils/characterAssets';
 
 const { useEffect, useRef, useState } = React;
 const RELATIONSHIP_FILTERS = [

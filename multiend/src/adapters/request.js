@@ -5,7 +5,12 @@
 // ReadableStream; mini-program uses Taro.request({ enableChunked }) chunks.
 import Taro from '@tarojs/taro';
 import { getItem } from './storage';
-import { API_BASE } from '../config';
+import {
+  API_BASE,
+  CLOUDBASE_ENV_ID,
+  CLOUDBASE_SERVICE_NAME,
+  USE_CLOUDBASE_CONTAINER,
+} from '../config';
 
 export const DEFAULT_TIMEOUT_MS = 20000;
 
@@ -68,19 +73,45 @@ function normalizeRequestError(error) {
   return error;
 }
 
+function callCloudbaseContainer(url, payload, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (
+    typeof wx === 'undefined' ||
+    !wx.cloud ||
+    typeof wx.cloud.callContainer !== 'function'
+  ) {
+    const error = new Error('CloudBase 容器调用不可用，请检查云开发初始化。');
+    error.code = 'CLOUDBASE_UNAVAILABLE';
+    return Promise.reject(error);
+  }
+
+  return wx.cloud.callContainer({
+    config: { env: CLOUDBASE_ENV_ID },
+    path: url,
+    method: 'POST',
+    header: {
+      ...buildAuthHeaders(),
+      'X-WX-SERVICE': CLOUDBASE_SERVICE_NAME,
+    },
+    data: payload,
+    timeout: timeoutMs,
+  });
+}
+
 // POST JSON with per-request timeout and opt-in retry of transient failures.
 export async function postJson(url, payload, { timeoutMs = DEFAULT_TIMEOUT_MS, retries = 0 } = {}) {
   let attempt = 0;
   for (;;) {
     try {
-      const res = await Taro.request({
-        url: API_BASE + url,
-        method: 'POST',
-        header: buildAuthHeaders(),
-        data: payload,
-        timeout: timeoutMs,
-        dataType: 'json',
-      });
+      const res = USE_CLOUDBASE_CONTAINER
+        ? await callCloudbaseContainer(url, payload, { timeoutMs })
+        : await Taro.request({
+          url: API_BASE + url,
+          method: 'POST',
+          header: buildAuthHeaders(),
+          data: payload,
+          timeout: timeoutMs,
+          dataType: 'json',
+        });
       return parseEnvelope(res.statusCode, res.data);
     } catch (error) {
       // Envelope errors thrown by parseEnvelope already carry .status/.code.
@@ -216,6 +247,11 @@ async function postSseChunked(url, payload, { onEvent } = {}) {
 export async function postSse(url, payload, options = {}) {
   if (process.env.TARO_ENV === 'h5') {
     return postSseFetch(url, payload, options);
+  }
+  if (USE_CLOUDBASE_CONTAINER) {
+    const data = await postJson('/api/chat', payload, options);
+    options.onEvent?.('done', data);
+    return null;
   }
   return postSseChunked(url, payload, options);
 }

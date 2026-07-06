@@ -308,8 +308,8 @@ export default function Index() {
 
       {/* Footer Branding */}
       <View className="site-footer">
-        <View>© 2026 xiaoxiai.com · 小希 AI 温柔女友版 · 带给您全天候的暖心陪伴</View>
-        <View style={{ marginTop: '6px', fontSize: '12px' }}>
+        <View className="footer-main">© 2026 xiaoxiai.com · 小希 AI 温柔女友版 · 带给您全天候的暖心陪伴</View>
+        <View className="footer-links">
           <Text style={{ color: 'var(--text-pink, #ffa3b8)' }}>隐私政策</Text>
           <Text>{' · '}</Text>
           <Text style={{ color: 'var(--text-pink, #ffa3b8)' }}>服务条款</Text>

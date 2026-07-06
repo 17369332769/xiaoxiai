@@ -14,6 +14,15 @@ const config = {
   outputRoot: 'dist',
   plugins: [],
   defineConstants: {},
+  terser: {
+    config: {
+      output: {
+        // Keep `0.6` instead of Terser's `.6`; WeChat DevTools' scanner can
+        // mistake `cond?.6:1` for optional chaining.
+        keep_numbers: true,
+      },
+    },
+  },
   // `@shared` -> the repo-level shared/ catalogs (food/gift/tasks/tiers) so the
   // multi-end app REUSES the same source of truth as web + backend, no fork.
   alias: {
